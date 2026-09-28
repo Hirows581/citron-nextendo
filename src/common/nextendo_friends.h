@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -33,6 +34,11 @@ std::vector<Entry> Get();
 // with zero friends for its whole session. GetWarm() gives that one call a short, bounded wait
 // for the cache to warm up instead. Never used by NEX titles' own repeated polling.
 std::vector<Entry> GetWarm(int timeout_ms);
+
+// Public display name of any pid, friend or not, via a resolver the frontend registers. Cached;
+// a first lookup waits at most timeout_ms and returns empty if the resolver is slower.
+void SetNameResolver(std::function<std::string(u64)> resolver);
+std::string ResolveName(u64 pid, int timeout_ms);
 
 // This player's own presence, as last set by the running game. Pushed to the account server so
 // friends see them online.

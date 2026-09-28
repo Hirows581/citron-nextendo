@@ -39,6 +39,9 @@
 NextendoController::NextendoController(Core::System& system_, QWidget* main_window_,
                                        QObject* parent)
     : QObject(parent), system(system_), main_window(main_window_) {
+#ifdef ENABLE_WEB_SERVICE
+    Common::NextendoFriends::SetNameResolver(&WebService::NextendoApi::GetNameByPid);
+#endif
     friend_poll_timer.setInterval(20000);
     connect(&friend_poll_timer, &QTimer::timeout, this, &NextendoController::PollFriends);
     friend_poll_timer.start();

@@ -123,6 +123,9 @@ std::vector<LobbyPlayer> GetRecentPlayers();
 // is never attached. Empty on failure or if the player has no avatar set.
 std::string GetAvatarByPid(u64 pid);
 
+// Public display name of any player; empty on failure. Unauthenticated, like GetAvatarByPid.
+std::string GetNameByPid(u64 pid);
+
 // Reports a player. The server refuses if the account never actually shared a lobby with pid.
 // Returns an empty string on success, else an error code ("not_encountered", "quota", or a
 // message fit to show the user).

@@ -1076,6 +1076,23 @@ std::string GetAvatarByPid(u64 pid) {
         std::span<const u8>{reinterpret_cast<const u8*>(result->body.data()), result->body.size()});
 }
 
+std::string GetNameByPid(u64 pid) {
+    if (pid == 0) {
+        return {};
+    }
+    const auto result = Send("GET", fmt::format("/api/names?pids={}", pid), {}, {});
+    if (!result || result->status != 200) {
+        return {};
+    }
+    try {
+        const auto json = nlohmann::json::parse(result->body);
+        const auto& entry = json.at("names").at(std::to_string(pid));
+        return entry.value("name", std::string{});
+    } catch (const nlohmann::json::exception&) {
+        return {};
+    }
+}
+
 std::string ReportPlayer(u64 pid, const std::string& reason, const std::string& comment) {
     const std::string token = Common::NextendoAccount::GetToken();
     if (token.empty()) {

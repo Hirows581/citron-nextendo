@@ -172,11 +172,7 @@ u64 FriendAdvertisedId(const Common::NextendoFriends::Entry& entry) {
     return entry.is_console && entry.account_id != 0 ? entry.account_id : entry.pid;
 }
 
-// [Nextendo] Resolves a pid to a display name for GetProfileList/GetProfileExtraList: the local
-// account itself (via NextendoAccount, not covered by the friends cache) or an actual Nextendo
-// friend. Strangers (e.g. a balloon owner you're not friends with) aren't resolvable here --
-// titles that also carry a plain name string on the wire (Odyssey's DataStoreSearchBalloonResult.
-// ownerName) fall back to that; this only covers the profile-lookup path.
+// Local account, then friends, then any player's public name (a card may show a stranger).
 bool ResolveProfileName(u64 pid, std::string& out_name) {
     if (Common::NextendoAccount::IsLinked() && Common::NextendoAccount::GetPid() == pid) {
         out_name = Common::NextendoAccount::GetUsername();
@@ -189,7 +185,8 @@ bool ResolveProfileName(u64 pid, std::string& out_name) {
         out_name = it->name;
         return true;
     }
-    return false;
+    out_name = Common::NextendoFriends::ResolveName(pid, 1500);
+    return !out_name.empty();
 }
 
 std::optional<ProfileImpl> MakeProfile(u64 pid) {
@@ -204,17 +201,21 @@ std::optional<ProfileImpl> MakeProfile(u64 pid) {
 
     // Same avatar URL a console is given for this friend; a title rendering the profile fetches it.
     u64 account_id = 0;
+    u64 owner_pid = pid;
     const auto entries = Common::NextendoFriends::Get();
     if (const auto it = std::find_if(entries.begin(), entries.end(),
                                      [pid](const auto& e) { return FriendMatchesId(e, pid); });
         it != entries.end()) {
         account_id = it->account_id;
+        owner_pid = it->pid;
     }
+    // Paths are what production's CDN keys on; the pid query lets other servers find the picture.
     const std::string url =
         account_id != 0
-            ? fmt::format("https://cdn-image-e0d67c509fb203858ebcb2fe3f88c2aa.baas.nintendo.com/1/fr_{:016x}",
-                          account_id)
-            : std::string{"https://cdn-image-e0d67c509fb203858ebcb2fe3f88c2aa.baas.nintendo.com/1/default"};
+            ? fmt::format("https://cdn-image-e0d67c509fb203858ebcb2fe3f88c2aa.baas.nintendo.com/1/fr_{:016x}?pid={}",
+                          account_id, owner_pid)
+            : fmt::format("https://cdn-image-e0d67c509fb203858ebcb2fe3f88c2aa.baas.nintendo.com/1/pid_{}?pid={}",
+                          pid, owner_pid);
     std::memcpy(out.image_url.data(), url.data(), std::min(url.size(), out.image_url.size() - 1));
 
     out.is_valid = 1;
@@ -369,6 +370,10 @@ public:
     }
 
     ~IFriendService() override {
+        // nnSdk closes an async session only after storing its result.
+        if (is_async_session) {
+            completion_event->Signal();
+        }
         service_context.CloseEvent(completion_event);
     }
 
@@ -379,12 +384,19 @@ public:
     // guest polling forever, so signal it centrally after every command in this class instead.
     Result HandleSyncRequest(Kernel::KServerSession& session, HLERequestContext& context) override {
         const Result result = ServiceFrameworkBase::HandleSyncRequest(session, context);
-        completion_event->Signal();
+        if (!is_async_session) {
+            completion_event->Signal();
+        }
+        ++handled_requests;
         return result;
     }
 
     void GetCompletionEvent(HLERequestContext& ctx) {
         LOG_DEBUG(Service_Friend, "GetCompletionEvent called");
+        // nnSdk's AsyncContextInternal opens a fresh session and asks for this first.
+        if (handled_requests == 0) {
+            is_async_session = true;
+        }
         IPC::ResponseBuilder rb{ctx, 2, 1};
         rb.Push(ResultSuccess);
         rb.PushCopyObjects(completion_event->GetReadableEvent());
@@ -558,6 +570,8 @@ private:
 
     KernelHelpers::ServiceContext service_context;
     Kernel::KEvent* completion_event;
+    u64 handled_requests{};
+    bool is_async_session{};
 };
 
 // [Nextendo] Registry of every live INotificationService so NotifyFriendsListUpdated() (called
@@ -1186,11 +1200,20 @@ struct FacedFriendRequestRegistrationKeyPayload { unsigned char data[16]; };
 struct FriendCodePayload { char code[15]; }; // Size 15 for 14 chars + null terminator
 
 namespace {
-// nnSdk sends the base image URL (0xA0 bytes) and an ImageSize; one resolution is served, so echo it.
+// nnSdk sends the base image URL (0xA0 bytes) and an ImageSize; titles decode into a buffer of that size.
 void RespondProfileImageUrl(HLERequestContext& ctx) {
     using Url = std::array<char, 0xA0>;
     IPC::RequestParser rp{ctx};
-    const auto url = rp.PopRaw<Url>();
+    auto url = rp.PopRaw<Url>();
+    const auto size = rp.Pop<u32>();
+    std::string sized{url.data(), strnlen(url.data(), url.size())};
+    if (sized.find("size=") == std::string::npos) {
+        sized += fmt::format("{}size={}", sized.find('?') == std::string::npos ? '?' : '&', size);
+    }
+    if (sized.size() < url.size()) {
+        url.fill('\0');
+        std::memcpy(url.data(), sized.data(), sized.size());
+    }
     IPC::ResponseBuilder rb{ctx, 2 + sizeof(Url) / sizeof(u32)};
     rb.Push(ResultSuccess);
     rb.PushRaw(url);

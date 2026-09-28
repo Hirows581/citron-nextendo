@@ -2,8 +2,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <chrono>
+#include <future>
 #include <mutex>
 #include <thread>
+#include <unordered_map>
 
 #include <fmt/format.h>
 
@@ -84,6 +86,40 @@ std::vector<Entry> GetWarm(int timeout_ms) {
         }
     }
     return entries;
+}
+
+namespace {
+std::mutex g_name_mutex;
+std::function<std::string(u64)> g_name_resolver;
+std::unordered_map<u64, std::shared_future<std::string>> g_names;
+} // Anonymous namespace
+
+void SetNameResolver(std::function<std::string(u64)> resolver) {
+    std::lock_guard lock{g_name_mutex};
+    g_name_resolver = std::move(resolver);
+}
+
+std::string ResolveName(u64 pid, int timeout_ms) {
+    std::shared_future<std::string> name;
+    {
+        std::lock_guard lock{g_name_mutex};
+        if (!g_name_resolver || pid == 0) {
+            return {};
+        }
+        auto it = g_names.find(pid);
+        const bool failed = it != g_names.end() &&
+                            it->second.wait_for(std::chrono::seconds{0}) == std::future_status::ready &&
+                            it->second.get().empty();
+        if (it == g_names.end() || failed) {
+            it = g_names.insert_or_assign(pid, std::async(std::launch::async, g_name_resolver, pid).share())
+                     .first;
+        }
+        name = it->second;
+    }
+    if (name.wait_for(std::chrono::milliseconds(timeout_ms)) != std::future_status::ready) {
+        return {};
+    }
+    return name.get();
 }
 
 void SetLocalPresence(s32 status, std::string app_field) {
