@@ -44,7 +44,6 @@ add_executable(citron
     applets/qt_profile_select.h
     applets/qt_software_keyboard.cpp
     applets/qt_software_keyboard.h
-    applets/qt_software_keyboard.ui
     applets/qt_web_browser.cpp
     applets/qt_web_browser.h
     applets/qt_web_browser_scripts.h
