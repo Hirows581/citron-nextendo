@@ -8,6 +8,8 @@
 #include "core/frontend/applets/cabinet.h"
 #include "core/frontend/applets/controller.h"
 #include "core/frontend/applets/error.h"
+#include "core/frontend/applets/friend_invitation.h"
+#include "core/hle/service/am/frontend/applet_my_page.h"
 #include "core/frontend/applets/general.h"
 #include "core/frontend/applets/mii_edit.h"
 #include "core/frontend/applets/profile_select.h"
@@ -83,12 +85,14 @@ FrontendAppletSet::FrontendAppletSet(CabinetApplet cabinet_applet,
                                      MiiEdit mii_edit_,
                                      ParentalControlsApplet parental_controls_applet,
                                      PhotoViewer photo_viewer_, ProfileSelect profile_select_,
-                                     SoftwareKeyboard software_keyboard_, WebBrowser web_browser_)
+                                     SoftwareKeyboard software_keyboard_, WebBrowser web_browser_,
+                                     std::unique_ptr<Core::Frontend::FriendInvitationApplet> friend_invitation_)
     : cabinet{std::move(cabinet_applet)}, controller{std::move(controller_applet)},
       error{std::move(error_applet)}, mii_edit{std::move(mii_edit_)},
       parental_controls{std::move(parental_controls_applet)},
       photo_viewer{std::move(photo_viewer_)}, profile_select{std::move(profile_select_)},
-      software_keyboard{std::move(software_keyboard_)}, web_browser{std::move(web_browser_)} {}
+      software_keyboard{std::move(software_keyboard_)}, web_browser{std::move(web_browser_)},
+      friend_invitation{std::move(friend_invitation_)} {}
 
 FrontendAppletSet::~FrontendAppletSet() = default;
 
@@ -113,6 +117,7 @@ AppletId FrontendAppletHolder::GetCurrentAppletId() const {
 }
 
 void FrontendAppletHolder::SetFrontendAppletSet(FrontendAppletSet set) {
+    if (set.friend_invitation) frontend.friend_invitation = std::move(set.friend_invitation);
     if (set.cabinet != nullptr) {
         frontend.cabinet = std::move(set.cabinet);
     }
@@ -207,6 +212,8 @@ std::shared_ptr<FrontendApplet> FrontendAppletHolder::GetApplet(std::shared_ptr<
                                                                 AppletId id,
                                                                 LibraryAppletMode mode) const {
     switch (id) {
+    case AppletId::MyPage:
+        return std::make_shared<MyPage>(system, applet, mode, frontend.friend_invitation.get());
     case AppletId::Auth:
         return std::make_shared<Auth>(system, applet, mode, *frontend.parental_controls);
     case AppletId::Cabinet:

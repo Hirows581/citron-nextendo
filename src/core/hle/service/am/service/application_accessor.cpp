@@ -43,7 +43,7 @@ IApplicationAccessor::IApplicationAccessor(Core::System& system_, std::shared_pt
         {150, D<&IApplicationAccessor::ReportApplicationExitTimeout>, "ReportApplicationExitTimeout"},
         {160, nullptr, "SetApplicationAttribute"},
         {170, nullptr, "HasSaveDataAccessPermission"},
-        {180, nullptr, "PushToFriendInvitationStorageChannel"},
+        {180, D<&IApplicationAccessor::PushToFriendInvitationStorageChannel>, "PushToFriendInvitationStorageChannel"},
         {190, nullptr, "PushToNotificationStorageChannel"},
         {200, nullptr, "RequestApplicationSoftReset"},
         {201, nullptr, "RestartApplicationTimer"},
@@ -107,6 +107,18 @@ Result IApplicationAccessor::PushLaunchParameter(LaunchParameterKind kind,
     default:
         R_THROW(ResultUnknown);
     }
+}
+
+Result IApplicationAccessor::PushToFriendInvitationStorageChannel(SharedPointer<IStorage> storage) {
+    auto data = storage->GetData();
+    R_UNLESS(data.size() >= sizeof(Common::UUID) &&
+                 data.size() <= sizeof(Common::UUID) + 0x400, ResultUnknown);
+    std::scoped_lock lk{m_applet->lock};
+    auto& channel = m_applet->friend_invitation_storage_channel;
+    R_UNLESS(channel.size() < 32, ResultUnknown);
+    channel.push_back(std::move(data));
+    m_applet->friend_invitation_storage_channel_event.Signal();
+    R_SUCCEED();
 }
 
 Result IApplicationAccessor::GetApplicationControlProperty(

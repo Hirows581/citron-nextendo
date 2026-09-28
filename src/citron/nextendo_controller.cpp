@@ -30,6 +30,7 @@
 #include "common/nextendo_compatible_titles.h"
 #include "citron/nextendo_chat_client.h"
 #include "citron/nextendo_controller.h"
+#include "citron/nextendo_game_invites.h"
 #include "citron/nextendo_save_sync.h"
 
 #ifdef ENABLE_WEB_SERVICE
@@ -38,7 +39,8 @@
 
 NextendoController::NextendoController(Core::System& system_, QWidget* main_window_,
                                        QObject* parent)
-    : QObject(parent), system(system_), main_window(main_window_) {
+    : QObject(parent), system(system_), main_window(main_window_),
+      game_invites(new NextendoGameInvites(system_, this)) {
 #ifdef ENABLE_WEB_SERVICE
     Common::NextendoFriends::SetNameResolver(&WebService::NextendoApi::GetNameByPid);
 #endif

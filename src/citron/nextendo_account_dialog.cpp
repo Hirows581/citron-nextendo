@@ -19,6 +19,7 @@
 #include <QClipboard>
 #include <QComboBox>
 #include <QCursor>
+#include <QDateTime>
 #include <QEvent>
 #include <QEventLoop>
 #include <QFileDialog>
@@ -62,6 +63,7 @@
 #include "citron/nextendo_avatar_cache.h"
 #include "common/nextendo_compatible_titles.h"
 #include "citron/nextendo_controller.h"
+#include "citron/nextendo_game_invites.h"
 #include "citron/nextendo_friend_delegate.h"
 #include "citron/nextendo_history_delegate.h"
 #include "citron/nextendo_network_probe.h"
@@ -1184,6 +1186,17 @@ NextendoAccountDialog::NextendoAccountDialog(NextendoController* controller_,
     outgoing_section_layout->addWidget(outgoing_requests_view);
     outgoing_requests_section->setVisible(false);
 
+    invites_view = MakeCardList(this);
+    invites_model = new QStandardItemModel(this);
+    invites_view->setModel(invites_model);
+    invite_delegate = new NextendoFriendDelegate(invites_view, this);
+    invites_view->setItemDelegate(invite_delegate);
+    connect(invites_view, &QListView::clicked, this, &NextendoAccountDialog::OnFriendsViewClicked);
+    invites_stack = new QStackedWidget;
+    invites_stack->addWidget(invites_view);
+    invites_stack->addWidget(MakeEmptyLabel(tr("No game invites.")));
+    invites_stack->setCurrentIndex(1);
+
     auto* requests_column_card = MakeDashCard();
     auto* requests_column_layout = new QVBoxLayout(requests_column_card);
     requests_column_layout->setContentsMargins(18, 16, 18, 16);
@@ -1191,6 +1204,8 @@ NextendoAccountDialog::NextendoAccountDialog(NextendoController* controller_,
     requests_column_layout->addWidget(MakeCardTitle(tr("Requests")));
     requests_column_layout->addWidget(requests_stack, 1);
     requests_column_layout->addWidget(outgoing_requests_section);
+    requests_column_layout->addWidget(MakeCardTitle(tr("Game Invites")));
+    requests_column_layout->addWidget(invites_stack, 1);
 
     auto* friends_requests_row = new QHBoxLayout;
     friends_requests_row->setSpacing(16);
@@ -1500,6 +1515,13 @@ NextendoAccountDialog::NextendoAccountDialog(NextendoController* controller_,
     connect(&refresh_timer, &QTimer::timeout, this, &NextendoAccountDialog::RefreshHistory);
     connect(&refresh_timer, &QTimer::timeout, this, &NextendoAccountDialog::RefreshCloudSaveTab);
     connect(&refresh_timer, &QTimer::timeout, this, &NextendoAccountDialog::RefreshPlayers);
+    if (auto* invites = controller ? controller->GameInvites() : nullptr) {
+        connect(invites, &NextendoGameInvites::Changed, this, &NextendoAccountDialog::RefreshInvites);
+        connect(&refresh_timer, &QTimer::timeout, invites, &NextendoGameInvites::Refresh);
+        connect(&refresh_timer, &QTimer::timeout, this, &NextendoAccountDialog::RefreshInvites);
+        invites->Refresh();
+    }
+    RefreshInvites();
     refresh_timer.start();
 
     connect(pages_stack, &QStackedWidget::currentChanged, this, [this](int index) {
@@ -2237,6 +2259,24 @@ void NextendoAccountDialog::OnFriendsViewClicked(const QModelIndex& index) {
         }
         return;
     }
+    if (view == invites_view) {
+        const QRect cell_rect = view->visualRect(index);
+        const QPoint pos = view->viewport()->mapFromGlobal(QCursor::pos());
+        const auto hit = invite_delegate->HitTestActions(cell_rect, pos, true);
+        auto* invites = controller ? controller->GameInvites() : nullptr;
+        if (hit == NextendoFriendDelegate::ActionHit::None || !invites) {
+            return;
+        }
+        const QString id = index.data(NextendoFriendItem::InviteIdRole).toString();
+        if (hit == NextendoFriendDelegate::ActionHit::Secondary) {
+            invites->Decline(id);
+        } else if (const QString error = invites->Accept(id); !error.isEmpty()) {
+            status->setText(error);
+        } else {
+            accept(); // Get out of the game's way while it joins.
+        }
+        return;
+    }
 
     auto* delegate = view == requests_view ? request_delegate : friend_delegate;
     const bool is_request = index.data(NextendoFriendItem::IsRequestRole).toBool();
@@ -2279,6 +2319,27 @@ void NextendoAccountDialog::OnFriendsViewClicked(const QModelIndex& index) {
         RunAsync([pid] { return WebService::NextendoApi::RemoveFriend(pid); });
     }
 #endif
+}
+
+void NextendoAccountDialog::RefreshInvites() {
+    auto* invites = controller ? controller->GameInvites() : nullptr;
+    invites_model->clear();
+    if (invites) {
+        const s64 now = QDateTime::currentSecsSinceEpoch();
+        for (const auto& invite : invites->Pending()) {
+            const QString game =
+                controller->ResolveGameName(fmt::format("{:016X}", invite.title_id));
+            const s64 minutes = std::max<s64>(1, (invite.expires_at - now + 59) / 60);
+            auto* item = new NextendoFriendItem(invite.sender_pid,
+                                                QString::fromStdString(invite.sender_name), {}, 2,
+                                                game, invites->Avatar(invite.sender_pid), true);
+            item->setData(tr("%1  ·  %n min left", nullptr, static_cast<int>(minutes)).arg(game),
+                          NextendoFriendItem::DetailRole);
+            item->setData(QString::fromStdString(invite.id), NextendoFriendItem::InviteIdRole);
+            invites_model->appendRow(item);
+        }
+    }
+    invites_stack->setCurrentIndex(invites_model->rowCount() > 0 ? 0 : 1);
 }
 
 void NextendoAccountDialog::RunAsync(std::function<std::string()> task,

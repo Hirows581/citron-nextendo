@@ -35,6 +35,9 @@ constexpr int kAutoHideMs = 7000;
 constexpr int kFadeMs = 250;
 constexpr int kSlideMs = 280;
 constexpr int kSlideDistance = 24; // px the card travels in from the screen edge on Show()
+constexpr int kButtonArea = 42;    // extra card height holding a game invite's buttons
+constexpr int kButtonHeight = 28;
+constexpr int kInviteAutoHideMs = 20000; // still listed on the Friends page afterwards
 } // Anonymous namespace
 
 NextendoToast::NextendoToast(QWidget* main_window_)
@@ -50,6 +53,7 @@ NextendoToast::NextendoToast(QWidget* main_window_)
     setAttribute(Qt::WA_ShowWithoutActivating);
     resize(kWidth, kHeight);
     setWindowOpacity(0.0);
+    setMouseTracking(true);
     hide();
 
     auto_hide_timer.setSingleShot(true);
@@ -108,13 +112,18 @@ void NextendoToast::Show(const QString& headline, const QString& detail,
     if (minimized || !qApp->activeWindow()) {
         return;
     }
+    // A pending game invite isn't replaced by a passive notification.
+    if (kind == Kind::GameInvite && kind_ != Kind::GameInvite && auto_hide_timer.isActive()) {
+        return;
+    }
 
+    kind = kind_;
+    hovered_button = 0;
     scale = ComputeScale();
     const int shadow_margin = static_cast<int>(kShadowMargin * scale);
     resize(static_cast<int>(kWidth * scale) + 2 * shadow_margin,
-          static_cast<int>(kHeight * scale) + 2 * shadow_margin);
+          static_cast<int>(CardHeight() * scale) + 2 * shadow_margin);
 
-    kind = kind_;
     line1 = headline;
     line2 = detail;
     avatar = Nextendo::AvatarCache::Get(headline.toStdString(), avatar_base64.toStdString(),
@@ -144,8 +153,36 @@ void NextendoToast::Show(const QString& headline, const QString& detail,
     fade->setEndValue(1.0);
     fade->start();
 
-    auto_hide_timer.start(kAutoHideMs);
+    auto_hide_timer.start(kind == Kind::GameInvite ? kInviteAutoHideMs : kAutoHideMs);
     update();
+}
+
+void NextendoToast::ShowInvite(const QString& headline, const QString& detail,
+                               const QString& avatar_base64, const QString& id) {
+    invite_id = id;
+    Show(headline, detail, avatar_base64, Kind::GameInvite);
+}
+
+int NextendoToast::CardHeight() const {
+    return kind == Kind::GameInvite ? kHeight + kButtonArea : kHeight;
+}
+
+QRect NextendoToast::CardRect() const {
+    const int m = static_cast<int>(kShadowMargin * scale);
+    return rect().adjusted(m, m, -m, -m);
+}
+
+QRect NextendoToast::AcceptRect() const {
+    const auto S = [this](int base) { return static_cast<int>(base * scale); };
+    const QRect card = CardRect();
+    const int width = (card.width() - S(20) - S(16) - S(8)) / 2;
+    return QRect(card.left() + S(20), card.bottom() - S(12) - S(kButtonHeight), width,
+                 S(kButtonHeight));
+}
+
+QRect NextendoToast::DeclineRect() const {
+    const QRect accept = AcceptRect();
+    return accept.translated(accept.width() + static_cast<int>(8 * scale), 0);
 }
 
 void NextendoToast::Reposition() {
@@ -156,7 +193,7 @@ void NextendoToast::Reposition() {
     const int top_extra = static_cast<int>(kTopExtra * scale);
     const int shadow_margin = static_cast<int>(kShadowMargin * scale);
     const int card_w = static_cast<int>(kWidth * scale);
-    const int card_h = static_cast<int>(kHeight * scale);
+    const int card_h = static_cast<int>(CardHeight() * scale);
     const QPoint win_pos = main_window->mapToGlobal(QPoint(0, 0));
     const int left_x = win_pos.x() + edge_margin;
     const int right_x = win_pos.x() + main_window->width() - edge_margin - card_w;
@@ -201,8 +238,37 @@ void NextendoToast::HideAnimated() {
 void NextendoToast::mousePressEvent(QMouseEvent* event) {
     QWidget::mousePressEvent(event);
     auto_hide_timer.stop();
+    if (kind == Kind::GameInvite) {
+        const QPoint pos = event->pos();
+        if (AcceptRect().contains(pos) || DeclineRect().contains(pos)) {
+            emit inviteAnswered(invite_id, AcceptRect().contains(pos));
+            HideAnimated();
+            return;
+        }
+    }
     emit clicked(kind);
     HideAnimated();
+}
+
+void NextendoToast::mouseMoveEvent(QMouseEvent* event) {
+    QWidget::mouseMoveEvent(event);
+    if (kind != Kind::GameInvite) {
+        return;
+    }
+    const QPoint pos = event->pos();
+    const int hovered = AcceptRect().contains(pos) ? 1 : DeclineRect().contains(pos) ? 2 : 0;
+    if (hovered != hovered_button) {
+        hovered_button = hovered;
+        update();
+    }
+}
+
+void NextendoToast::leaveEvent(QEvent* event) {
+    QWidget::leaveEvent(event);
+    if (hovered_button != 0) {
+        hovered_button = 0;
+        update();
+    }
 }
 
 void NextendoToast::paintEvent(QPaintEvent*) {
@@ -213,8 +279,9 @@ void NextendoToast::paintEvent(QPaintEvent*) {
     const auto S = [this](int base) { return static_cast<int>(base * scale); };
     const int radius = S(14);
 
-    const QRect card = rect().adjusted(S(kShadowMargin), S(kShadowMargin), -S(kShadowMargin),
-                                       -S(kShadowMargin));
+    const QRect card = CardRect();
+    const QRect content =
+        kind == Kind::GameInvite ? card.adjusted(0, 0, 0, -S(kButtonArea)) : card;
 
     // Soft shadow: a poor-man's blur via layered, low-alpha rounded rects growing outward.
     painter.setPen(Qt::NoPen);
@@ -241,8 +308,9 @@ void NextendoToast::paintEvent(QPaintEvent*) {
     painter.fillPath(bar.intersected(bg), accent);
 
     const int avatar_size = S(kAvatarSize);
-    const QRect avatar_rect(card.left() + S(20), card.top() + (card.height() - avatar_size) / 2,
-                            avatar_size, avatar_size);
+    const QRect avatar_rect(card.left() + S(20),
+                            content.top() + (content.height() - avatar_size) / 2, avatar_size,
+                            avatar_size);
 
     painter.setPen(QPen(accent, S(2)));
     painter.setBrush(Qt::NoBrush);
@@ -285,7 +353,7 @@ void NextendoToast::paintEvent(QPaintEvent*) {
     const QFontMetrics sub_fm(sub_font);
     const int line_gap = S(2);
     const int block_h = category_fm.height() + line_gap + name_fm.height() + line_gap + sub_fm.height();
-    int block_top = card.top() + (card.height() - block_h) / 2;
+    int block_top = content.top() + (content.height() - block_h) / 2;
 
     painter.setFont(category_font);
     painter.setPen(accent);
@@ -305,6 +373,28 @@ void NextendoToast::paintEvent(QPaintEvent*) {
     painter.drawText(QRect(text_left, block_top, text_width, sub_fm.height()),
                      Qt::AlignVCenter | Qt::AlignLeft | Qt::TextSingleLine,
                      sub_fm.elidedText(line2, Qt::ElideRight, text_width));
+
+    if (kind != Kind::GameInvite) {
+        return;
+    }
+    QFont button_font = QApplication::font();
+    button_font.setBold(true);
+    button_font.setPointSizeF(std::max(button_font.pointSizeF() * scale, 7.5 * scale));
+    painter.setFont(button_font);
+    const auto draw_button = [&](const QRect& r, const QString& text, const QColor& color,
+                                 bool hovered) {
+        QPainterPath path;
+        path.addRoundedRect(r, r.height() / 2.0, r.height() / 2.0);
+        QColor fill = color;
+        fill.setAlpha(hovered ? 235 : 60);
+        painter.fillPath(path, fill);
+        painter.setPen(QPen(color, S(1) + 0.5));
+        painter.drawPath(path);
+        painter.setPen(hovered ? QColor(Qt::white) : color);
+        painter.drawText(r, Qt::AlignCenter, text);
+    };
+    draw_button(AcceptRect(), tr("Accept"), QColor(50, 195, 85), hovered_button == 1);
+    draw_button(DeclineRect(), tr("Decline"), QColor(220, 80, 70), hovered_button == 2);
 }
 
 QColor NextendoToast::AccentColor() const {
@@ -318,6 +408,8 @@ QColor NextendoToast::AccentColor() const {
         return QColor(180, 120, 240); // purple -- incoming request, wants attention
     case Kind::RequestSent:
         return QColor(100, 149, 237); // blue -- confirmation of your own action
+    case Kind::GameInvite:
+        return QColor(255, 176, 32); // amber -- a live session waiting on you
     }
     return QColor(100, 149, 237);
 }
@@ -334,6 +426,8 @@ QString NextendoToast::CategoryLabel() const {
         return tr("REQUEST SENT");
     case Kind::ChatRequest:
         return tr("CHAT INVITE");
+    case Kind::GameInvite:
+        return tr("GAME INVITE");
     }
     return {};
 }

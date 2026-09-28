@@ -92,6 +92,9 @@ struct Applet {
 
     // Channels
     std::deque<std::vector<u8>> user_channel_launch_parameter{};
+    // Accepted friend invitations: AccountUid followed by opaque game data.
+    // Protected by lock, and owned by this application instance.
+    std::deque<std::vector<u8>> friend_invitation_storage_channel{};
     std::deque<std::vector<u8>> preselected_user_launch_parameter{};
 
     // Process winding context (IProcessWindingController::PushContext/PopContext)

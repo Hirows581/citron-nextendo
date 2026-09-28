@@ -7,6 +7,7 @@
 #include <queue>
 
 #include "common/swap.h"
+#include "core/frontend/applets/friend_invitation.h"
 #include "core/hle/service/am/applet.h"
 
 union Result;
@@ -26,6 +27,7 @@ class PhotoViewerApplet;
 class ProfileSelectApplet;
 class SoftwareKeyboardApplet;
 class WebBrowserApplet;
+class FriendInvitationApplet;
 } // namespace Core::Frontend
 
 namespace Kernel {
@@ -96,7 +98,8 @@ struct FrontendAppletSet {
                       ErrorApplet error_applet, MiiEdit mii_edit_,
                       ParentalControlsApplet parental_controls_applet, PhotoViewer photo_viewer_,
                       ProfileSelect profile_select_, SoftwareKeyboard software_keyboard_,
-                      WebBrowser web_browser_);
+                      WebBrowser web_browser_,
+                      std::unique_ptr<Core::Frontend::FriendInvitationApplet> friend_invitation_ = nullptr);
     ~FrontendAppletSet();
 
     FrontendAppletSet(const FrontendAppletSet&) = delete;
@@ -114,6 +117,7 @@ struct FrontendAppletSet {
     ProfileSelect profile_select;
     SoftwareKeyboard software_keyboard;
     WebBrowser web_browser;
+    std::unique_ptr<Core::Frontend::FriendInvitationApplet> friend_invitation;
 };
 
 class FrontendAppletHolder {

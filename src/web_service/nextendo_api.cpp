@@ -874,6 +874,64 @@ std::string PostPid(const std::string& path, u64 pid) {
 
 } // Anonymous namespace
 
+std::string SendGameInvitation(u64 title_id, const std::vector<u64>& recipients,
+                               std::span<const u8> data, std::span<const u8> description) {
+    const auto token = Common::NextendoAccount::GetToken();
+    if (token.empty()) return "Sign in to Nextendo first.";
+    if (recipients.empty() || recipients.size() > 15 || data.size() > 1024 ||
+        description.size() != 3072) return "Invalid invitation data.";
+    const auto response = Send("POST", "/api/game-invitations",
+        nlohmann::json{{"action", "send"}, {"title_id", fmt::format("{:016X}", title_id)},
+                       {"recipients", recipients}, {"user_data", Base64StdEncode(data)},
+                       {"description", Base64StdEncode(description)}}.dump(), token);
+    if (!response) return "Could not reach Nextendo.";
+    if (response->status != 200) return ErrorFrom(response->body, "Could not send invitation.");
+    return {};
+}
+
+GameInvitationList GetGameInvitations() {
+    GameInvitationList out;
+    const auto token = Common::NextendoAccount::GetToken();
+    if (token.empty()) { out.error = "Sign in to Nextendo first."; return out; }
+    const auto response = Send("GET", "/api/game-invitations", {}, token);
+    if (!response || response->status != 200) {
+        out.error = "Could not load invitations.";
+        return out;
+    }
+    try {
+        // Keep the parsed document alive; ranging over parse(...).at() dangles.
+        const auto json = nlohmann::json::parse(response->body);
+        for (const auto& item : json.at("invitations")) {
+            GameInvitation invitation;
+            invitation.id = item.at("id").get<std::string>();
+            invitation.sender_pid = item.at("sender_pid").get<u64>();
+            invitation.sender_name = item.at("sender_name").get<std::string>();
+            invitation.title_id = std::stoull(item.at("title_id").get<std::string>(), nullptr, 16);
+            invitation.expires_at = item.value("expires_at", s64{0});
+            if (!item.at("user_data").is_null()) {
+                invitation.user_data = Base64StdDecode(item.at("user_data").get<std::string>());
+            }
+            if (invitation.user_data.size() > 1024 || out.invitations.size() >= 32) {
+                out.error = "Invalid invitation response.";
+                out.invitations.clear();
+                return out;
+            }
+            out.invitations.push_back(std::move(invitation));
+        }
+        out.ok = true;
+    } catch (const std::exception&) { out.error = "Invalid invitation response."; }
+    return out;
+}
+
+std::string DismissGameInvitation(const std::string& id) {
+    const auto token = Common::NextendoAccount::GetToken();
+    if (token.empty()) return "Sign in to Nextendo first.";
+    const auto response = Send("POST", "/api/game-invitations",
+        nlohmann::json{{"action", "dismiss"}, {"id", id}}.dump(), token);
+    if (!response || response->status != 200) return "Invitation is no longer available.";
+    return {};
+}
+
 FriendList GetFriends() {
     FriendList out;
 

@@ -22,6 +22,7 @@ struct UUID;
 }
 
 class NextendoChatClient;
+class NextendoGameInvites;
 
 // Sign-in/out, friend-cache refresh, and the online-toast poll. One instance, owned by GMainWindow.
 class NextendoController : public QObject {
@@ -59,6 +60,9 @@ public:
     void EnsureChatConnected();
     NextendoChatClient* GetChatClient() const {
         return chat_client;
+    }
+    NextendoGameInvites* GameInvites() const {
+        return game_invites;
     }
 
 signals:
@@ -104,5 +108,6 @@ private:
     bool first_poll = true; // suppresses a toast burst for every friend already online at boot
 
     NextendoChatClient* chat_client = nullptr;
+    NextendoGameInvites* game_invites = nullptr;
     QString pending_chat_room_id; // set by whichever create/join is in flight, used to tag ChatMemberJoined
 };

@@ -89,7 +89,7 @@ ICommonStateGetter::ICommonStateGetter(Core::System& system_, std::shared_ptr<Ap
         {1020, D<&ICommonStateGetter::GetGpuErrorDetectedSystemEvent>, "GetGpuErrorDetectedSystemEvent"},
         {1021, nullptr, "SetDelayTimeToAbortOnGpuError"},
         {1030, D<&ICommonStateGetter::GetFriendInvitationStorageChannelEvent>, "GetFriendInvitationStorageChannelEvent"},
-        {1031, nullptr, "TryPopFromFriendInvitationStorageChannel"},
+        {1031, D<&ICommonStateGetter::TryPopFromFriendInvitationStorageChannel>, "TryPopFromFriendInvitationStorageChannel"},
         {1040, D<&ICommonStateGetter::GetNotificationStorageChannelEvent>, "GetNotificationStorageChannelEvent"},
         {1041, nullptr, "TryPopFromNotificationStorageChannel"},
         {1050, D<&ICommonStateGetter::GetHealthWarningDisappearedSystemEvent>, "GetHealthWarningDisappearedSystemEvent"},
@@ -374,6 +374,19 @@ Result ICommonStateGetter::GetGpuErrorDetectedSystemEvent(
     OutCopyHandle<Kernel::KReadableEvent> out_event) {
     LOG_DEBUG(Service_AM, "called");
     *out_event = m_applet->gpu_error_detected_event.GetHandle();
+    R_SUCCEED();
+}
+
+Result ICommonStateGetter::TryPopFromFriendInvitationStorageChannel(
+    Out<SharedPointer<IStorage>> out_storage) {
+    std::scoped_lock lk{m_applet->lock};
+    auto& channel = m_applet->friend_invitation_storage_channel;
+    R_UNLESS(!channel.empty(), AM::ResultNoDataInChannel);
+    *out_storage = std::make_shared<IStorage>(system, std::move(channel.front()));
+    channel.pop_front();
+    if (channel.empty()) {
+        m_applet->friend_invitation_storage_channel_event.Clear();
+    }
     R_SUCCEED();
 }
 

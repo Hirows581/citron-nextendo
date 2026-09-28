@@ -119,6 +119,7 @@ static FileSys::VirtualFile VfsDirectoryCreateFileWrapper(const FileSys::Virtual
 #include <QToolTip>
 #include <QUrl>
 #include <QtConcurrent/QtConcurrent>
+#include "citron/applets/qt_friend_invitation.h"
 
 #ifdef HAVE_SDL2
 #include <SDL.h> // For SDL ScreenSaver functions
@@ -172,6 +173,7 @@ static FileSys::VirtualFile VfsDirectoryCreateFileWrapper(const FileSys::Virtual
 #include "citron/nzp_online_count.h"
 #include "citron/nextendo_population_history.h"
 #include "citron/nextendo_save_sync.h"
+#include "citron/nextendo_game_invites.h"
 #include "citron/nextendo_toast.h"
 #include "citron/play_time_manager.h"
 #include "common/nextendo_account.h"
@@ -2069,7 +2071,7 @@ void GMainWindow::ConnectMenuEvents() {
         if (!Common::NextendoAccount::IsLinked()) {
             return;
         }
-        if (kind == NextendoToast::Kind::Request) {
+        if (kind == NextendoToast::Kind::Request || kind == NextendoToast::Kind::GameInvite) {
             NextendoAccountDialog dialog(nextendo_controller, *system, this,
                                          NextendoAccountDialog::kFriendsPage);
             connect(&dialog, &NextendoAccountDialog::InviteToChatRequested, this,
@@ -2079,6 +2081,22 @@ void GMainWindow::ConnectMenuEvents() {
             OpenNextendoChatWindow(pending_chat_invite_room_id);
         }
     });
+    auto* game_invites = nextendo_controller->GameInvites();
+    connect(game_invites, &NextendoGameInvites::Received, this,
+            [this, game_invites](const QString& id, const QString& name, u64 pid) {
+                const QString game =
+                    nextendo_controller->ResolveGameName(nextendo_controller->GetLocalAppId());
+                nextendo_toast->ShowInvite(name, tr("invited you to play %1").arg(game),
+                                           game_invites->Avatar(pid), id);
+            });
+    connect(nextendo_toast, &NextendoToast::inviteAnswered, this,
+            [this, game_invites](const QString& id, bool accepted) {
+                if (!accepted) {
+                    game_invites->Decline(id);
+                } else if (const QString error = game_invites->Accept(id); !error.isEmpty()) {
+                    statusBar()->showMessage(error, 8000);
+                }
+            });
     connect(ui->action_Nextendo_Population, &QAction::triggered, this,
             [this] { NextendoPopulationDialog(this).exec(); });
     // Prototype: no .ui entry yet (still being pitched for real integration), added here
@@ -2453,6 +2471,7 @@ bool GMainWindow::LoadROM(const QString& filename, Service::AM::FrontendAppletPa
         std::make_unique<QtProfileSelector>(*this),          // Profile Selector
         std::make_unique<QtSoftwareKeyboard>(*this),         // Software Keyboard
         std::make_unique<QtWebBrowser>(*this),               // Web Browser
+        std::make_unique<QtFriendInvitation>(this),          // Friend invitations
     });
 
     const Core::SystemResultStatus result{

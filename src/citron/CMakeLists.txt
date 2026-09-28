@@ -41,6 +41,8 @@ add_executable(citron
     applets/qt_error.cpp
     applets/qt_error.h
     applets/qt_profile_select.cpp
+    applets/qt_friend_invitation.cpp
+    applets/qt_friend_invitation.h
     applets/qt_profile_select.h
     applets/qt_software_keyboard.cpp
     applets/qt_software_keyboard.h
@@ -279,6 +281,8 @@ add_executable(citron
     nextendo_controller.h
     nextendo_friend_delegate.cpp
     nextendo_friend_delegate.h
+    nextendo_game_invites.cpp
+    nextendo_game_invites.h
     nextendo_history_delegate.cpp
     nextendo_history_delegate.h
     nextendo_ldn_counts.cpp

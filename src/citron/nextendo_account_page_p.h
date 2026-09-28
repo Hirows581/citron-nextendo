@@ -19,6 +19,8 @@ public:
     static constexpr int IsRequestRole = Qt::UserRole + 7;   // true in the incoming-requests list
     static constexpr int PillLabelRole = Qt::UserRole + 8;   // overrides the single-pill's default "Remove" text
     static constexpr int IsMeRole = Qt::UserRole + 9;        // true for the local player's own row; suppresses the pill
+    static constexpr int DetailRole = Qt::UserRole + 10;     // replaces the presence line when set
+    static constexpr int InviteIdRole = Qt::UserRole + 11;   // game invitation id, invites list only
 
     NextendoFriendItem(u64 pid, const QString& name, const QString& friend_code, s32 presence,
                        const QString& game, const QString& avatar_b64, bool is_request,

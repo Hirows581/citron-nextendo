@@ -69,6 +69,7 @@ protected:
 
 private:
     void RefreshFriends();
+    void RefreshInvites();
     void RefreshHistory();
     void RefreshPlayers();
     void OnPlayersViewClicked(const QModelIndex& index);
@@ -135,6 +136,10 @@ private:
     QListView* outgoing_requests_view;
     QStandardItemModel* outgoing_requests_model;
     NextendoFriendDelegate* outgoing_request_delegate;
+    QListView* invites_view;
+    QStandardItemModel* invites_model;
+    QStackedWidget* invites_stack;
+    NextendoFriendDelegate* invite_delegate;
     QListView* history_view;
     QStandardItemModel* history_model;
     QStackedWidget* history_stack;

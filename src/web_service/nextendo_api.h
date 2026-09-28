@@ -13,6 +13,25 @@
 
 namespace WebService::NextendoApi {
 
+struct GameInvitation {
+    std::string id;
+    u64 sender_pid{};
+    std::string sender_name;
+    u64 title_id{};
+    std::vector<u8> user_data;
+    s64 expires_at{}; // Unix seconds
+};
+struct GameInvitationList {
+    bool ok{};
+    std::string error;
+    std::vector<GameInvitation> invitations;
+};
+// Empty error means the server accepted the operation.
+std::string SendGameInvitation(u64 title_id, const std::vector<u64>& recipients,
+                               std::span<const u8> data, std::span<const u8> description);
+GameInvitationList GetGameInvitations();
+std::string DismissGameInvitation(const std::string& id);
+
 struct LoginResult {
     bool ok = false;
     std::string error;       // Set when ok is false.
