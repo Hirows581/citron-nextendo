@@ -239,7 +239,7 @@ u64 ConfiguredTestPid() {
     return 0;
 }
 
-std::string BuildIdToken(const std::string& installed_version) {
+std::string BuildIdToken(const std::string& installed_version, u64 program_id) {
     const auto now = std::chrono::duration_cast<std::chrono::seconds>(
                          std::chrono::system_clock::now().time_since_epoch())
                          .count();
@@ -278,6 +278,11 @@ std::string BuildIdToken(const std::string& installed_version) {
     if (!installed_version.empty()) {
         tv_claim = fmt::format(R"("tv":"{}",)", installed_version);
     }
+    // Scarlet shares Violet's NPLN tenant but needs its own app_id; every other title's token
+    // keeps the existing claim shape.
+    if (program_id == 0x0100A3D008C5C000ULL) {
+        tv_claim += fmt::format(R"("app_id":"{:016X}",)", program_id);
+    }
 
     const std::string payload = fmt::format(
         R"({{"sub":"{}","aud":"{}","iss":"{}","typ":"id_token","iat":{},"exp":{},"jku":"{}",)"
@@ -299,21 +304,25 @@ std::vector<u8> GetIdTokenBytes(Core::System& system) {
     static u64 cached_generation = 0;
     static std::string cached_version;
     static u64 cached_test_pid = 0;
+    static u64 cached_program_id = 0;
 
     std::lock_guard lock{mutex};
 
     const u64 generation = Common::NextendoAccount::GetGeneration();
     const std::string installed_version = GetInstalledTitleVersion(system);
     const u64 test_pid = ConfiguredTestPid();
+    const u64 program_id = system.GetApplicationProcessProgramID();
     const auto now = std::chrono::steady_clock::now();
     if (cached.empty() || now >= expiry || generation != cached_generation ||
-        installed_version != cached_version || test_pid != cached_test_pid) {
-        const std::string token = BuildIdToken(installed_version);
+        installed_version != cached_version || test_pid != cached_test_pid ||
+        program_id != cached_program_id) {
+        const std::string token = BuildIdToken(installed_version, program_id);
         cached.assign(token.begin(), token.end());
         expiry = now + std::chrono::hours{2};
         cached_generation = generation;
         cached_version = installed_version;
         cached_test_pid = test_pid;
+        cached_program_id = program_id;
         LOG_INFO(Service_ACC, "[Nextendo] Issued a signed BAAS id_token ({} bytes)", cached.size());
     }
 
@@ -1064,7 +1073,7 @@ public:
             {1, &IAsyncNetworkServiceLicenseKindContext::Cancel, "Cancel"},
             {2, &IAsyncNetworkServiceLicenseKindContext::HasDone, "HasDone"},
             {3, &IAsyncNetworkServiceLicenseKindContext::GetResult, "GetResult"},
-            {4, &IAsyncNetworkServiceLicenseKindContext::GetNetworkServiceLicenseKind, "GetNetworkServiceLicenseKind"},
+            {100, &IAsyncNetworkServiceLicenseKindContext::GetNetworkServiceLicenseKind, "GetNetworkServiceLicenseKind"},
         };
         RegisterHandlers(functions);
         completion_event = service_context.CreateEvent("IAsyncNetworkServiceLicenseKindContext:CompletionEvent");
@@ -1099,10 +1108,11 @@ private:
     }
 
     void GetNetworkServiceLicenseKind(HLERequestContext& ctx) {
-        LOG_INFO(Service_ACC, "[Nextendo] GetNetworkServiceLicenseKind called -> returning Subscribed (2)");
+        // nn::account::NetworkServiceLicenseKind: 0 NoSubscription, 1 Subscribed.
+        LOG_INFO(Service_ACC, "[Nextendo] GetNetworkServiceLicenseKind -> Subscribed");
         IPC::ResponseBuilder rb{ctx, 3};
         rb.Push(ResultSuccess);
-        rb.Push<u32>(2);
+        rb.Push<u32>(1);
     }
 
     KernelHelpers::ServiceContext service_context;

@@ -5,11 +5,13 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <cstdlib>
 #include <cstring>
 #include <deque>
 #include <filesystem>
 #include <memory>
 #include <mutex>
+#include <string_view>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -1618,6 +1620,30 @@ Errno BSD::BindImpl(s32 fd, std::span<const u8> addr) {
     return result;
 }
 
+namespace {
+
+constexpr u16 kPokemonGamesyncPort = 7575;
+
+bool IsPokemonGamesyncTitle(u64 program_id) {
+    return program_id == 0x01008F6008C5E000ULL || program_id == 0x0100A3D008C5C000ULL;
+}
+
+// Scarlet/Violet's Gamesync listener; NEXTENDO_VIOLET_GAMESYNC_PORT overrides it, "0" disables.
+u16 PokemonGamesyncDestinationPort() {
+    constexpr u16 kDedicatedPort = 8463;
+    const char* configured = std::getenv("NEXTENDO_VIOLET_GAMESYNC_PORT");
+    if (configured == nullptr || *configured == '\0') {
+        return kDedicatedPort;
+    }
+    if (std::string_view{configured} == "0") {
+        return 0;
+    }
+    const int port = std::atoi(configured);
+    return port > 1023 && port <= 65535 ? static_cast<u16>(port) : kDedicatedPort;
+}
+
+} // Anonymous namespace
+
 Errno BSD::ConnectImpl(s32 fd, std::span<const u8> addr) {
     if (!IsFileDescriptorValid(fd)) {
         LOG_ERROR(Service, "Connect failed: Invalid fd={}", fd);
@@ -1655,6 +1681,25 @@ Errno BSD::ConnectImpl(s32 fd, std::span<const u8> addr) {
                      fd, Network::IPv4AddressToRedactedString(*recovered),
                      translated_addr.portno);
             translated_addr.ip = *recovered;
+        }
+    }
+
+    // Scarlet/Violet reach Gamesync on 7575 like Splatoon 3, sometimes by a literal (even zeroed)
+    // session address with no DNS lookup. Send only their TCP sockets to the dedicated listener;
+    // the guest still presents gamesync.npln.nintendo.net as its TLS SNI.
+    if (file_descriptors[fd]->type == Network::Type::STREAM &&
+        translated_addr.portno == kPokemonGamesyncPort &&
+        IsPokemonGamesyncTitle(system.GetApplicationProcessProgramID())) {
+        if (const auto server = GetNextendoServerAddress()) {
+            if (translated_addr.ip == zero_addr) {
+                translated_addr.ip = *server;
+            }
+            const u16 port = PokemonGamesyncDestinationPort();
+            if (port != 0 && translated_addr.ip == *server) {
+                LOG_INFO(Service, "[Nextendo] Scarlet/Violet Gamesync fd={} routed to port {}", fd,
+                         port);
+                translated_addr.portno = port;
+            }
         }
     }
 
@@ -2291,6 +2336,15 @@ std::pair<s32, Errno> BSD::SendToImpl(s32 fd, u32 flags, std::span<const u8> mes
         auto guest_addr_in = GetValue<SockAddrIn>(addr);
         addr_in = Translate(guest_addr_in);
         p_addr_in = &addr_in;
+
+        // Same lost-address case as ConnectImpl: recover only a port a redirect recorded, so a
+        // datagram to an arbitrary peer port is never rewritten.
+        static constexpr std::array<u8, 4> zero_addr{0, 0, 0, 0};
+        if (addr_in.ip == zero_addr) {
+            if (const auto recovered = GetLastIpForPort(addr_in.portno)) {
+                addr_in.ip = *recovered;
+            }
+        }
     }
 
     if (!descriptor.is_connection_based && p_addr_in) {

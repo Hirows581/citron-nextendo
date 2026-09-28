@@ -37,6 +37,9 @@ inline const std::unordered_map<u64, std::string>& Table() {
         {0x01006fd0080b2000, "1.0.19"}, // Overcooked! 2
         {0x01006fe013472000, "1.1.1"}, // Mario Party Superstars
         {0x0100000000010000, "1.4.1"}, // Super Mario Odyssey
+        {0x01008f6008c5e000, "4.0.0"}, // Pokémon Violet
+        {0x0100a3d008c5c000, "4.0.0"}, // Pokémon Scarlet
+        {0x0100c9a00ece6000, "4.2.0"}, // Nintendo 64 - Nintendo Classics
         {0x0100f9f00c696000, "1.0.15"},      // Crash Team Racing Nitro-Fueled
         {0x01001b300b9be000, "2.7.7.92380"}, // Diablo III: Eternal Collection
     };

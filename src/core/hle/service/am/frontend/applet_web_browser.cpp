@@ -58,6 +58,75 @@ std::string ParseStringValue(const std::vector<u8>& data) {
                                                        data.size());
 }
 
+bool IsPokemonTermsTitle(u64 program_id) {
+    return program_id == 0x01008F6008C5E000ULL || program_id == 0x0100A3D008C5C000ULL;
+}
+
+// Battle Stadium and competition entry open a terms page on battle-*.pokemon-home.com/scvi/ and
+// wait for its callback; honor only a callback in the same page directory on the same origin.
+bool IsPokemonTermsCallback(std::string_view initial_url, std::string_view callback_url) {
+    constexpr std::string_view scheme = "https://";
+    if (!initial_url.starts_with("https://battle-")) {
+        return false;
+    }
+    const auto path_start = initial_url.find('/', scheme.size());
+    if (path_start == std::string_view::npos ||
+        !initial_url.substr(0, path_start).ends_with(".pokemon-home.com") ||
+        !initial_url.substr(path_start).starts_with("/scvi/")) {
+        return false;
+    }
+    const auto page = initial_url.substr(0, initial_url.find('?'));
+    return callback_url == std::string{page.substr(0, page.rfind('/'))} + "/callback";
+}
+
+// Output TLVs, which 8.0.0+ Web and 3.0.0+ Share applets return instead of WebCommonReturnValue.
+std::vector<u8> BuildWebOutputTlvs(ShimKind shim_kind, WebExitReason exit_reason,
+                                   std::string_view last_url) {
+    std::vector<u8> url(last_url.begin(), last_url.end());
+    url.push_back(0); // The reported size includes the terminator.
+
+    std::vector<u8> out;
+    const auto append = [&out](const auto& value) {
+        const auto* bytes = reinterpret_cast<const u8*>(&value);
+        out.insert(out.end(), bytes, bytes + sizeof(value));
+    };
+    const auto append_tlv = [&](WebArgOutputTLVType type, std::span<const u8> data) {
+        WebArgOutputTLV tlv{};
+        tlv.output_tlv_type = type;
+        tlv.arg_data_size = static_cast<u16>(data.size());
+        append(tlv);
+        out.insert(out.end(), data.begin(), data.end());
+    };
+
+    WebArgHeader header{};
+    header.total_tlv_entries = last_url.empty() ? 1 : 3;
+    header.shim_kind = shim_kind;
+    append(header);
+
+    const auto reason = static_cast<u32>(exit_reason);
+    append_tlv(WebArgOutputTLVType::ShareExitReason,
+               {reinterpret_cast<const u8*>(&reason), sizeof(reason)});
+    if (!last_url.empty()) {
+        const u64 url_size = url.size();
+        append_tlv(WebArgOutputTLVType::LastURL, url);
+        append_tlv(WebArgOutputTLVType::LastURLSize,
+                   {reinterpret_cast<const u8*>(&url_size), sizeof(url_size)});
+    }
+    // The SDK reads the output as one fixed 0x2000-byte storage.
+    out.resize(std::max<size_t>(out.size(), 0x2000));
+    return out;
+}
+
+// Ends a Scarlet/Violet terms page on its callback; accepting the terms goes to /agree.
+std::vector<u8> BuildPokemonTermsResponse(std::string callback_url) {
+    if (callback_url.ends_with("/terms/callback") ||
+        callback_url.ends_with("/scvi/battle-terms/callback") ||
+        callback_url.ends_with("/scvi/competition/callback")) {
+        callback_url += "/agree";
+    }
+    return BuildWebOutputTlvs(ShimKind::Web, WebExitReason::CallbackURL, callback_url);
+}
+
 std::string GetMainURL(const std::string& url) {
     const auto index = url.find('?');
 
@@ -357,7 +426,12 @@ void WebBrowser::WebBrowserExit(WebExitReason exit_reason, std::string last_url)
          web_applet_version >= WebAppletVersion::Version196608) ||
         (web_arg_header.shim_kind == ShimKind::Web &&
          web_applet_version >= WebAppletVersion::Version524288)) {
-        // TODO: Push Output TLVs instead of a WebCommonReturnValue
+        // These versions pop output TLVs; a WebCommonReturnValue here aborts the SDK (2162-0001).
+        complete = true;
+        PushOutData(std::make_shared<IStorage>(
+            system, BuildWebOutputTlvs(web_arg_header.shim_kind, exit_reason, last_url)));
+        Exit();
+        return;
     }
 
     WebCommonReturnValue web_common_return_value;
@@ -501,6 +575,22 @@ void WebBrowser::ExecuteShare() {
 }
 
 void WebBrowser::ExecuteWeb() {
+    if (web_applet_version >= WebAppletVersion::Version524288 &&
+        IsPokemonTermsTitle(system.GetApplicationProcessProgramID())) {
+        const auto initial_url = ParseStringValue(
+            GetInputTLVData(WebArgInputTLVType::InitialURL).value_or(std::vector<u8>{}));
+        const auto callback_url = ParseStringValue(
+            GetInputTLVData(WebArgInputTLVType::CallbackURL).value_or(std::vector<u8>{}));
+        if (IsPokemonTermsCallback(initial_url, callback_url)) {
+            LOG_INFO(Service_AM, "Scarlet/Violet terms page answered with its callback");
+            complete = true;
+            PushOutData(
+                std::make_shared<IStorage>(system, BuildPokemonTermsResponse(callback_url)));
+            Exit();
+            return;
+        }
+    }
+
     LOG_INFO(Service_AM, "Opening external URL at {}", external_url);
 
     frontend.OpenExternalWebPage(external_url,

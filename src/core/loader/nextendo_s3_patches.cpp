@@ -155,7 +155,18 @@ constexpr std::array<u8, 39> kOvercooked2PatchesData{{
 }};
 constexpr std::array<std::span<const u8>, 1> kOvercooked2Patches{{kOvercooked2PatchesData}};
 
-constexpr std::array<KnownBuild, 8> kKnownBuilds{{
+// Pokémon Violet 3.0.1/4.0.0 and Scarlet 4.0.0: pinned certificate and both peer-name rejections,
+// at the same offsets in both games.
+constexpr std::array<u8, 39> kPokemonSvPatchesData{{
+    0x49, 0x50, 0x53, 0x33, 0x32,
+    0x00, 0x1F, 0xEF, 0xA0, 0x00, 0x04, 0x2A, 0x00, 0x80, 0x52,
+    0x00, 0x1F, 0xE5, 0xB4, 0x00, 0x04, 0x1F, 0x20, 0x03, 0xD5,
+    0x00, 0x1F, 0xE6, 0x58, 0x00, 0x04, 0x1F, 0x20, 0x03, 0xD5,
+    0x45, 0x45, 0x4F, 0x46,
+}};
+constexpr std::array<std::span<const u8>, 1> kPokemonSvPatches{{kPokemonSvPatchesData}};
+
+constexpr std::array<KnownBuild, 10> kKnownBuilds{{
     {"6830B3A12406CB4716FEC5ADDC35D3E2DC92D212", kSplatoon3PeerPatches},
     {"726D2B882DD9EF10F4A9D73EED088740630FB6C8", kSplatoon3CertOnlyPatches},
     {"28C4287AEE36F7499DA60F3E68B54C70DA382D75", kSplatoon3PeerPatches},
@@ -164,6 +175,8 @@ constexpr std::array<KnownBuild, 8> kKnownBuilds{{
     {"BCA1A793E41A4836EF3C03286B18E816EEC62338", kPeaceWalkerPatches},
     {"1C689518406930512C13DDF4217E7676", kCtrPatches},
     {"616640F27B9362502D1CE10BF01EB9A6", kOvercooked2Patches},
+    {"709BFD66115298640155FCC4979DBA151C7CC79A", kPokemonSvPatches}, // Violet 3.0.1 / 4.0.0
+    {"421C5411B487EB4D049DD065FEC9547773E8E598", kPokemonSvPatches}, // Scarlet 4.0.0
 }};
 
 FileSys::VirtualFile MakeIpsFile(std::span<const u8> bytes) {

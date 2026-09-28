@@ -106,6 +106,19 @@ static bool RedirectionNextendoActive() {
     return v != "0" && v != "false" && v != "no" && v != "off";
 }
 
+std::optional<Network::IPv4Address> GetNextendoServerAddress() {
+    if (!RedirectionNextendoActive()) {
+        return std::nullopt;
+    }
+    Network::IPv4Address ip{};
+    if (!Network::TryParseIPv4Literal(
+            GetConfiguredIp(Settings::values.nextendo_server_ip.GetValue(), "NEXTENDO_SERVER_IP"),
+            ip)) {
+        return std::nullopt;
+    }
+    return ip;
+}
+
 static std::optional<std::string> GetNextendoRedirectIp(const std::string& host) {
     if (!RedirectionNextendoActive()) {
         return std::nullopt;

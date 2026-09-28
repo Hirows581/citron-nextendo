@@ -7552,11 +7552,23 @@ void GMainWindow::SyncNextendoHistory() {
 #endif
 }
 
+namespace {
+constexpr u64 kPokemonViolet = 0x01008F6008C5E000ULL;
+constexpr u64 kPokemonScarlet = 0x0100A3D008C5C000ULL;
+
+// Scarlet and Violet take optional event BCAT rather than Splatoon 2's schedule byaml.
+bool IsNextendoPokemonBcatTitle(u64 title_id) {
+    return title_id == kPokemonViolet || title_id == kPokemonScarlet;
+}
+} // Anonymous namespace
+
 bool GMainWindow::NextendoByamlRequired(u64 title_id) const {
     switch (title_id) {
     case 0x0100f8f0000a2000ULL: // Splatoon 2
     case 0x01003bc0000a0000ULL: // Splatoon 2
     case 0x01003c700009c800ULL: // Splatoon 2
+    case kPokemonViolet:
+    case kPokemonScarlet:
         return true;
     default:
         return false;
@@ -7568,9 +7580,19 @@ bool GMainWindow::NextendoByamlDownloadEnabled() const {
 }
 
 bool GMainWindow::NextendoByamlInstalled(u64 title_id) const {
-    const auto path = Common::FS::GetCitronPath(Common::FS::CitronPath::NANDDir) /
-                      fmt::format("system/save/bcat/{:016X}/vsdata/VSSetting_0.byaml", title_id);
-    return std::filesystem::exists(path);
+    const auto bcat_dir = Common::FS::GetCitronPath(Common::FS::CitronPath::NANDDir) /
+                          fmt::format("system/save/bcat/{:016X}", title_id);
+    if (IsNextendoPokemonBcatTitle(title_id)) {
+        std::error_code ec;
+        for (auto it = std::filesystem::recursive_directory_iterator(bcat_dir, ec);
+             !ec && it != std::filesystem::recursive_directory_iterator(); it.increment(ec)) {
+            if (it->is_regular_file(ec) && it->path().filename() != ".nextendo_bcat_hash") {
+                return true;
+            }
+        }
+        return false;
+    }
+    return std::filesystem::exists(bcat_dir / "vsdata/VSSetting_0.byaml");
 }
 
 bool GMainWindow::NextendoByamlSkipped(u64 title_id) const {
@@ -7691,15 +7713,23 @@ bool GMainWindow::NextendoByamlDownload(u64 title_id) {
 
     // Only this title ID's server-side BCAT content is kept current; fetch it for all variants.
     constexpr u64 kCanonicalByamlTitleId = 0x0100f8f0000a2000ULL;
-    const auto fetch_title_id_hex = fmt::format("{:016X}", kCanonicalByamlTitleId);
+    const bool pokemon = IsNextendoPokemonBcatTitle(title_id);
+    const auto fetch_title_id_hex =
+        fmt::format("{:016X}", pokemon ? title_id : kCanonicalByamlTitleId);
 
     // Always fetch the full seed and compare its hash locally, rather than trusting the
     // server's Last-Modified/304 response as the sole freshness signal — that path could get
     // stuck serving a stale rotation schedule if the server's conditional-GET handling doesn't
     // track content changes precisely. Ryujinx-Nextendo hits the same server and takes the same
     // always-fetch-and-hash approach for exactly this reason.
-    const auto zip_bytes = WebService::NextendoApi::DownloadBcatSeed(fetch_title_id_hex);
+    auto zip_bytes = WebService::NextendoApi::DownloadBcatSeed(fetch_title_id_hex);
+    if (zip_bytes.empty() && title_id == kPokemonScarlet) {
+        // The current event is shared by both games but served under Violet's title ID; it is
+        // still installed into Scarlet's own delivery cache.
+        zip_bytes = WebService::NextendoApi::DownloadBcatSeed(fmt::format("{:016X}", kPokemonViolet));
+    }
     if (zip_bytes.empty()) {
+        // An event is optional for Scarlet/Violet; keep whatever is installed.
         return false;
     }
 
@@ -7723,6 +7753,12 @@ bool GMainWindow::NextendoByamlDownload(u64 title_id) {
     const auto dest_path =
         Common::FS::GetCitronPath(Common::FS::CitronPath::NANDDir) /
         fmt::format("system/save/bcat/{}", title_id_hex);
+
+    if (ZipContainsPathTraversal(tmp_path)) {
+        LOG_ERROR(Frontend, "Nextendo BCAT: package for {} has unsafe paths", title_id_hex);
+        std::filesystem::remove(tmp_path);
+        return false;
+    }
 
     // A prior download's files that aren't part of this one would otherwise linger indefinitely.
     std::error_code ec;
@@ -8132,6 +8168,15 @@ void GMainWindow::SilentlyDownloadNextendoByaml(u64 title_id) {
 
 void GMainWindow::OfferNextendoByamlDownload(u64 title_id) {
 #ifdef ENABLE_WEB_SERVICE
+    // Scarlet/Violet's event is optional: refresh it before boot without asking.
+    if (IsNextendoPokemonBcatTitle(title_id)) {
+        auto future = QtConcurrent::run([this, title_id] { return NextendoByamlDownload(title_id); });
+        while (!future.isFinished()) {
+            QCoreApplication::processEvents();
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        return;
+    }
     if (!NextendoByamlDownloadEnabled() || !NextendoByamlRequired(title_id) ||
         NextendoByamlInstalled(title_id) || NextendoByamlSkipped(title_id)) {
         return;

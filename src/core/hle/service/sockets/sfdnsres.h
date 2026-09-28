@@ -52,4 +52,7 @@ std::string GetLastHostForIp(const std::string& ip);
 void SetLastIpForPort(u16 port, Network::IPv4Address ip);
 std::optional<Network::IPv4Address> GetLastIpForPort(u16 port);
 
+// The configured Nextendo game server, or nullopt when redirection is off.
+std::optional<Network::IPv4Address> GetNextendoServerAddress();
+
 } // namespace Service::Sockets
