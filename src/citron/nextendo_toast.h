@@ -25,11 +25,10 @@ public:
     explicit NextendoToast(QWidget* main_window);
     ~NextendoToast() override;
 
-    // False when suppressed (disabled, window minimized or inactive, or an invite is showing).
-    bool Show(const QString& headline, const QString& detail, const QString& avatar_base64,
+    void Show(const QString& headline, const QString& detail, const QString& avatar_base64,
              Kind kind = Kind::Online);
     // GameInvite toast with Accept/Decline buttons; answered through inviteAnswered.
-    bool ShowInvite(const QString& headline, const QString& detail, const QString& avatar_base64,
+    void ShowInvite(const QString& headline, const QString& detail, const QString& avatar_base64,
                     const QString& id);
 
 signals:
