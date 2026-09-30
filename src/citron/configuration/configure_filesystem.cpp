@@ -56,6 +56,7 @@ void ConfigureFilesystem::SetConfiguration() {
     ui->dump_nso->setChecked(Settings::values.dump_nso.GetValue());
     ui->cache_game_list->setChecked(UISettings::values.cache_game_list.GetValue());
     ui->backup_saves_to_nand->setChecked(Settings::values.backup_saves_to_nand.GetValue());
+    ui->updater_enable_backups->setChecked(UISettings::values.updater_enable_backups.GetValue());
 
     // NCA Scanning Toggle
     ui->scan_nca->setChecked(UISettings::values.scan_nca.GetValue());
@@ -74,6 +75,7 @@ void ConfigureFilesystem::ApplyConfiguration() {
     Settings::values.dump_nso = ui->dump_nso->isChecked();
     UISettings::values.cache_game_list = ui->cache_game_list->isChecked();
     Settings::values.backup_saves_to_nand.SetValue(ui->backup_saves_to_nand->isChecked());
+    UISettings::values.updater_enable_backups.SetValue(ui->updater_enable_backups->isChecked());
 
     // NCA Scanning Toggle
     UISettings::values.scan_nca = ui->scan_nca->isChecked();

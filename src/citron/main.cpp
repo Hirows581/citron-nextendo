@@ -7477,7 +7477,18 @@ int main(int argc, char* argv[]) {
         result_file.close();
         std::filesystem::remove(update_result_path);
 
-        if (status == "SUCCESS") {
+        if (status == "SUCCESS" && !UISettings::values.updater_enable_backups.GetValue()) {
+            // The helper always keeps a copy so a failed update can roll back; drop it once the
+            // update has succeeded if the user doesn't want backups.
+            const std::filesystem::path backup_path = backup_dir;
+            std::error_code ec;
+            if (backup_path.filename().string().starts_with("backup_") &&
+                backup_path.parent_path().filename() == "backup") {
+                std::filesystem::remove_all(backup_path, ec);
+            }
+            QMessageBox::information(nullptr, QObject::tr("Update Applied"),
+                                     QObject::tr("Citron Neo has been updated successfully!"));
+        } else if (status == "SUCCESS") {
             QMessageBox::information(
                 nullptr, QObject::tr("Update Applied"),
                 QObject::tr("Citron Neo has been updated successfully!\n\n"

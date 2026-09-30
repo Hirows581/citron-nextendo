@@ -346,9 +346,12 @@ void UpdaterService::OnDownloadFinished() {
     LOG_INFO(Frontend, "Download completed: {}", download_path.string());
 
     pending_update_zip_path = download_path;
-    const QString backup_path_str = QString::fromStdString(GetPendingBackupPath().string());
-    emit UpdateInstallProgress(
-        100, QStringLiteral("Your current version will be backed up to:\n%1").arg(backup_path_str));
+    if (UISettings::values.updater_enable_backups.GetValue()) {
+        const QString backup_path_str = QString::fromStdString(GetPendingBackupPath().string());
+        emit UpdateInstallProgress(
+            100,
+            QStringLiteral("Your current version will be backed up to:\n%1").arg(backup_path_str));
+    }
     emit UpdateCompleted(
         UpdateResult::Success,
         QStringLiteral("Update downloaded successfully. Citron Neo will restart to apply it."));

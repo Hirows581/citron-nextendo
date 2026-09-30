@@ -438,10 +438,15 @@ void UpdaterDialog::ShowCompletedState() {
 
 #ifdef _WIN32
     ui->titleLabel->setText(QStringLiteral("Update ready!"));
-    ui->statusLabel->setText(
-        QStringLiteral("Citron Neo will now restart to apply the update.\n\n"
-                       "Your current version is being backed up to:\n%1")
-            .arg(QString::fromStdString(updater_service->GetPendingBackupPath().string())));
+    if (UISettings::values.updater_enable_backups.GetValue()) {
+        ui->statusLabel->setText(
+            QStringLiteral("Citron Neo will now restart to apply the update.\n\n"
+                           "Your current version is being backed up to:\n%1")
+                .arg(QString::fromStdString(updater_service->GetPendingBackupPath().string())));
+    } else {
+        ui->statusLabel->setText(
+            QStringLiteral("Citron Neo will now restart to apply the update."));
+    }
     ui->progressGroup->setVisible(false);
     ui->downloadButton->setVisible(false);
     ui->cancelButton->setVisible(false);
