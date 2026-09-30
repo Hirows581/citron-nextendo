@@ -59,11 +59,13 @@ std::string ParseStringValue(const std::vector<u8>& data) {
 }
 
 bool IsPokemonTermsTitle(u64 program_id) {
-    return program_id == 0x01008F6008C5E000ULL || program_id == 0x0100A3D008C5C000ULL;
+    return program_id == 0x01008F6008C5E000ULL || program_id == 0x0100A3D008C5C000ULL ||
+           program_id == 0x0100F43008C44000ULL;
 }
 
-// Battle Stadium and competition entry open a terms page on battle-*.pokemon-home.com/scvi/ and
-// wait for its callback; honor only a callback in the same page directory on the same origin.
+// Battle Stadium, competition entry (Scarlet/Violet, /scvi/) and Ranked Battles (Legends: Z-A,
+// /plza/) open a terms page on battle-*.pokemon-home.com and wait for its callback; honor only a
+// callback in the same page directory on the same origin.
 bool IsPokemonTermsCallback(std::string_view initial_url, std::string_view callback_url) {
     constexpr std::string_view scheme = "https://";
     if (!initial_url.starts_with("https://battle-")) {
@@ -72,7 +74,8 @@ bool IsPokemonTermsCallback(std::string_view initial_url, std::string_view callb
     const auto path_start = initial_url.find('/', scheme.size());
     if (path_start == std::string_view::npos ||
         !initial_url.substr(0, path_start).ends_with(".pokemon-home.com") ||
-        !initial_url.substr(path_start).starts_with("/scvi/")) {
+        !(initial_url.substr(path_start).starts_with("/scvi/") ||
+          initial_url.substr(path_start).starts_with("/plza/"))) {
         return false;
     }
     const auto page = initial_url.substr(0, initial_url.find('?'));
@@ -117,7 +120,7 @@ std::vector<u8> BuildWebOutputTlvs(ShimKind shim_kind, WebExitReason exit_reason
     return out;
 }
 
-// Ends a Scarlet/Violet terms page on its callback; accepting the terms goes to /agree.
+// Ends a Pokémon terms page on its callback; accepting the terms goes to /agree.
 std::vector<u8> BuildPokemonTermsResponse(std::string callback_url) {
     if (callback_url.ends_with("/terms/callback") ||
         callback_url.ends_with("/scvi/battle-terms/callback") ||
@@ -582,7 +585,7 @@ void WebBrowser::ExecuteWeb() {
         const auto callback_url = ParseStringValue(
             GetInputTLVData(WebArgInputTLVType::CallbackURL).value_or(std::vector<u8>{}));
         if (IsPokemonTermsCallback(initial_url, callback_url)) {
-            LOG_INFO(Service_AM, "Scarlet/Violet terms page answered with its callback");
+            LOG_INFO(Service_AM, "Pokémon terms page answered with its callback");
             complete = true;
             PushOutData(
                 std::make_shared<IStorage>(system, BuildPokemonTermsResponse(callback_url)));

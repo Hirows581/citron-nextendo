@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: Copyright 2025 citron Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -1379,9 +1380,17 @@ std::pair<s32, Errno> BSD::PollImpl(std::vector<u8>& write_buffer, std::span<con
     // host_pollfds.empty() can only happen when every entry was invalid, in which case
     // any_invalid is already true and the POLLNVAL-implies-immediate-return rule below applies
     // -- nothing to host-poll for, so there's no separate empty-but-valid case to wait out here.
+    // Decrypted TLS bytes are already readable even when the host socket is empty.
+    // Check before the blocking wait: checking only afterwards can wait for the
+    // entire timeout (or forever) while the guest's response is already buffered.
+    const bool any_ssl_pending = std::any_of(
+        host_pollfds.begin(), host_pollfds.end(), [](const Network::PollFD& entry) {
+            return True(entry.events & Network::PollEvents::In) &&
+                   Service::SSL::HasSslPendingData(entry.socket);
+        });
     std::pair<s32, Network::Errno> result{0, Network::Errno::SUCCESS};
     if (!host_pollfds.empty()) {
-        result = Network::Poll(host_pollfds, any_invalid ? 0 : timeout);
+        result = Network::Poll(host_pollfds, (any_invalid || any_ssl_pending) ? 0 : timeout);
     }
 
     for (size_t j = 0; j < valid_indices.size(); ++j) {

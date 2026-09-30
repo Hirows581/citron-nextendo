@@ -166,7 +166,18 @@ constexpr std::array<u8, 39> kPokemonSvPatchesData{{
 }};
 constexpr std::array<std::span<const u8>, 1> kPokemonSvPatches{{kPokemonSvPatchesData}};
 
-constexpr std::array<KnownBuild, 10> kKnownBuilds{{
+// Pokémon Legends: Z-A 2.0.2: the same three checks as Scarlet/Violet, matched instruction for
+// instruction (cert LDRB W10,[X21,#0x38] -> MOV W10,#1; peer CBNZ W0 and B.NE -> NOP).
+constexpr std::array<u8, 39> kPokemonZaPatchesData{{
+    0x49, 0x50, 0x53, 0x33, 0x32,
+    0x02, 0x03, 0xB4, 0xC0, 0x00, 0x04, 0x2A, 0x00, 0x80, 0x52,
+    0x02, 0x03, 0xAA, 0xB8, 0x00, 0x04, 0x1F, 0x20, 0x03, 0xD5,
+    0x02, 0x03, 0xAB, 0xBC, 0x00, 0x04, 0x1F, 0x20, 0x03, 0xD5,
+    0x45, 0x45, 0x4F, 0x46,
+}};
+constexpr std::array<std::span<const u8>, 1> kPokemonZaPatches{{kPokemonZaPatchesData}};
+
+constexpr std::array<KnownBuild, 11> kKnownBuilds{{
     {"6830B3A12406CB4716FEC5ADDC35D3E2DC92D212", kSplatoon3PeerPatches},
     {"726D2B882DD9EF10F4A9D73EED088740630FB6C8", kSplatoon3CertOnlyPatches},
     {"28C4287AEE36F7499DA60F3E68B54C70DA382D75", kSplatoon3PeerPatches},
@@ -177,6 +188,7 @@ constexpr std::array<KnownBuild, 10> kKnownBuilds{{
     {"616640F27B9362502D1CE10BF01EB9A6", kOvercooked2Patches},
     {"709BFD66115298640155FCC4979DBA151C7CC79A", kPokemonSvPatches}, // Violet 3.0.1 / 4.0.0
     {"421C5411B487EB4D049DD065FEC9547773E8E598", kPokemonSvPatches}, // Scarlet 4.0.0
+    {"B1F12FD919EAE86AB8A978317677E64BCE443D1F", kPokemonZaPatches}, // Legends: Z-A 2.0.2
 }};
 
 FileSys::VirtualFile MakeIpsFile(std::span<const u8> bytes) {
