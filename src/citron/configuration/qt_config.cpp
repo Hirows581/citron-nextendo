@@ -212,6 +212,9 @@ void QtConfig::ReadPathValues() {
         game_dir.deep_scan =
             ReadBooleanSetting(std::string("deep_scan"), std::make_optional(false));
         game_dir.expanded = ReadBooleanSetting(std::string("expanded"), std::make_optional(true));
+        if (game_dir.path.empty()) {
+            continue;
+        }
         UISettings::values.game_dirs.append(game_dir);
     }
     EndArray();

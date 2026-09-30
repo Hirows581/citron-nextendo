@@ -4,6 +4,9 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <cstdio>
+#include <filesystem>
 #include "common/fs/fs.h"
 #include "common/fs/path_util.h"
 #include "common/logging.h"
@@ -73,11 +76,16 @@ void Config::WriteToIni() const {
         break;
     }
     LOG_INFO(Config, "Writing {} configuration to: {}", config_type, config_loc);
+
+    // Write a sibling temp file and rename it over the config, so a crash mid-save can never
+    // leave a truncated config behind.
+    static std::atomic<u32> save_counter{};
+    const std::string temp_loc = fmt::format("{}.{}.tmp", config_loc, save_counter++);
     FILE* fp = nullptr;
 #ifdef _WIN32
-    fp = _wfopen(Common::UTF8ToUTF16W(config_loc).data(), L"wb");
+    fp = _wfopen(Common::UTF8ToUTF16W(temp_loc).data(), L"wb");
 #else
-    fp = fopen(config_loc.c_str(), "wb");
+    fp = fopen(temp_loc.c_str(), "wb");
 #endif
 
     if (fp == nullptr) {
@@ -87,10 +95,20 @@ void Config::WriteToIni() const {
 
     CSimpleIniA::FileWriter writer(fp);
     const SI_Error rc = config->Save(writer, false);
-    if (rc < 0) {
-        LOG_ERROR(Frontend, "Config file could not be saved!");
-    }
+    const bool flushed = std::fflush(fp) == 0;
     fclose(fp);
+
+    std::error_code ec;
+    if (rc < 0 || !flushed) {
+        LOG_ERROR(Frontend, "Config file could not be saved!");
+        std::filesystem::remove(FS::ToU8String(temp_loc), ec);
+        return;
+    }
+    std::filesystem::rename(FS::ToU8String(temp_loc), FS::ToU8String(config_loc), ec);
+    if (ec) {
+        LOG_ERROR(Frontend, "Config file could not be saved: {}", ec.message());
+        std::filesystem::remove(FS::ToU8String(temp_loc), ec);
+    }
 }
 
 void Config::SetUpIni() {
