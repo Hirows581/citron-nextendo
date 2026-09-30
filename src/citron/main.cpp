@@ -7555,10 +7555,13 @@ void GMainWindow::SyncNextendoHistory() {
 namespace {
 constexpr u64 kPokemonViolet = 0x01008F6008C5E000ULL;
 constexpr u64 kPokemonScarlet = 0x0100A3D008C5C000ULL;
+constexpr u64 kPokemonLegendsZa = 0x0100F43008C44000ULL;
 
-// Scarlet and Violet take optional event BCAT rather than Splatoon 2's schedule byaml.
+// Scarlet/Violet events and Legends: Z-A Mystery Gifts are optional BCAT rather than Splatoon 2's
+// schedule byaml.
 bool IsNextendoPokemonBcatTitle(u64 title_id) {
-    return title_id == kPokemonViolet || title_id == kPokemonScarlet;
+    return title_id == kPokemonViolet || title_id == kPokemonScarlet ||
+           title_id == kPokemonLegendsZa;
 }
 } // Anonymous namespace
 
@@ -7569,6 +7572,7 @@ bool GMainWindow::NextendoByamlRequired(u64 title_id) const {
     case 0x01003c700009c800ULL: // Splatoon 2
     case kPokemonViolet:
     case kPokemonScarlet:
+    case kPokemonLegendsZa:
         return true;
     default:
         return false;
