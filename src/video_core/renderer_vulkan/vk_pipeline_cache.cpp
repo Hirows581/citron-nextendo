@@ -59,7 +59,7 @@ using VideoCommon::GraphicsEnvironment;
 constexpr u32 TRANSFERABLE_CACHE_VERSION = 18;
 constexpr u32 VULKAN_PIPELINE_CACHE_VERSION = 18;
 constexpr size_t VULKAN_CACHE_FLUSH_PIPELINES = 64;
-constexpr size_t VULKAN_CACHE_FLUSH_MIN_SECONDS = 15;
+constexpr s64 VULKAN_CACHE_FLUSH_MIN_SECONDS = 15;
 constexpr std::array<char, 8> VULKAN_CACHE_MAGIC_NUMBER{'y', 'u', 'z', 'u', 'v', 'k', 'c', 'h'};
 
 template <typename Container>
@@ -448,8 +448,7 @@ PipelineCache::PipelineCache(Tegra::MaxwellDeviceMemoryManager& device_memory_,
         .has_extended_dynamic_state_2_extra = device.IsExtExtendedDynamicState2ExtrasSupported(),
         .has_extended_dynamic_state_3_blend = device.IsExtExtendedDynamicState3BlendingSupported(),
         .has_extended_dynamic_state_3_enables = device.IsExtExtendedDynamicState3EnablesSupported(),
-        .has_dynamic_vertex_input = device.IsExtVertexInputDynamicStateSupported() &&
-                                    Settings::values.vertex_input_dynamic_state.GetValue(),
+        .has_dynamic_vertex_input = device.IsExtVertexInputDynamicStateSupported(),
         .has_transform_feedback = device.IsExtTransformFeedbackSupported(),
     };
 }
@@ -474,7 +473,7 @@ void PipelineCache::QueueVulkanPipelineCacheFlush() {
     }
 
     const auto now = std::chrono::steady_clock::now();
-    const auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - last_flush).count();
+    const auto elapsed = static_cast<s64>(std::chrono::duration_cast<std::chrono::seconds>(now - last_flush).count());
 
     const bool count_reached = (++pipelines_since_flush >= VULKAN_CACHE_FLUSH_PIPELINES);
     const bool time_reached = (last_flush.time_since_epoch().count() != 0) && (elapsed >= VULKAN_CACHE_FLUSH_MIN_SECONDS);
@@ -596,7 +595,6 @@ void PipelineCache::LoadDiskResources(u64 title_id, std::stop_token stop_loading
         GraphicsPipelineCacheKey key;
         file.read(reinterpret_cast<char*>(&key), sizeof(key));
 
-        // Alinhado ao Eden: Removeu HasValidEntryInstruction e checagens redundantes
         if ((key.state.extended_dynamic_state != 0) !=
                 dynamic_features.has_extended_dynamic_state ||
             (key.state.extended_dynamic_state_2 != 0) !=
@@ -654,10 +652,8 @@ void PipelineCache::LoadDiskResources(u64 title_id, std::stop_token stop_loading
     state.has_loaded = true;
     lock.unlock();
 
-    // Aguarda todos os workers terminarem a compilação
     workers.WaitForRequests(stop_loading);
 
-    // Salva o cache compilado de pipelines do driver logo após o término da inicialização
     if (use_vulkan_pipeline_cache) {
         SerializeVulkanPipelineCache(vulkan_pipeline_cache_filename, vulkan_pipeline_cache,
                                      VULKAN_PIPELINE_CACHE_VERSION);
