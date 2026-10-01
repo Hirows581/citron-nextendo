@@ -161,10 +161,7 @@ public:
 
     std::unordered_map<ComputePipelineCacheKey, std::unique_ptr<ComputePipeline>> compute_cache;
     std::unordered_map<GraphicsPipelineCacheKey, std::unique_ptr<GraphicsPipeline>> graphics_cache;
-    // Keep replaced failed pipelines alive for stale transition edges and async build cleanup.
     std::vector<std::unique_ptr<GraphicsPipeline>> retired_graphics_pipelines;
-    // A shader that fails translation fails identically forever; without this it is retranslated
-    // every frame the draw is issued.
     std::unordered_set<GraphicsPipelineCacheKey> failed_graphics_keys;
 
     ShaderPools main_pools;
