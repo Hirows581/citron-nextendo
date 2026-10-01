@@ -58,8 +58,8 @@ using VideoCommon::GraphicsEnvironment;
 
 constexpr u32 TRANSFERABLE_CACHE_VERSION = 15;
 constexpr u32 VULKAN_PIPELINE_CACHE_VERSION = 14;
-constexpr size_t VULKAN_CACHE_FLUSH_PIPELINES = 128;
-constexpr size_t VULKAN_CACHE_FLUSH_MIN_SECONDS = 30;
+constexpr size_t VULKAN_CACHE_FLUSH_PIPELINES = 64;
+constexpr size_t VULKAN_CACHE_FLUSH_MIN_SECONDS = 15;
 constexpr std::array<char, 8> VULKAN_CACHE_MAGIC_NUMBER{'y', 'u', 'z', 'u', 'v', 'k', 'c', 'h'};
 
 template <typename Container>
@@ -250,7 +250,6 @@ Shader::RuntimeInfo MakeRuntimeInfo(std::span<const Shader::IR::Program> program
     case Shader::Stage::Fragment: {
         std::ranges::transform(key.state.color_formats, info.frag_color_types.begin(),
                                &GetFragmentOutputType);
-        // OPTIMIZED FOR LOW GPU ACCURACY - skip alpha test to reduce shader complexity
         if (!Settings::IsGPULevelLow()) {
             info.alpha_test_func = MaxwellToCompareFunction(
                 key.state.UnpackComparisonOp(key.state.alpha_test_func.Value()));
@@ -297,7 +296,6 @@ size_t GetTotalPipelineWorkers() {
     const size_t max_core_threads =
         std::max<size_t>(static_cast<size_t>(std::thread::hardware_concurrency()), 2ULL);
 #ifdef ANDROID
-    // Leave at least a few cores free in android
     constexpr size_t free_cores = 3ULL;
     if (max_core_threads <= free_cores) {
         return 1ULL;
@@ -349,7 +347,6 @@ PipelineCache::PipelineCache(Tegra::MaxwellDeviceMemoryManager& device_memory_,
       serialization_thread(1, "VkPipelineSerialization") {
     const auto& float_control{device.FloatControlProperties()};
     const VkDriverId driver_id{device.GetDriverID()};
-    // OPTIMIZED FOR LOW GPU ACCURACY - enable mediump in fragment shaders for better perf
     const bool low_gpu_accuracy = Settings::IsGPULevelLow();
 
     profile = Shader::Profile{
@@ -444,30 +441,27 @@ PipelineCache::PipelineCache(Tegra::MaxwellDeviceMemoryManager& device_memory_,
                     Tegra::Engines::Maxwell3D::Regs::NumVertexArrays);
     }
 
-    // Apply user's Extended Dynamic State setting
-    const auto eds_setting = Settings::values.extended_dynamic_state.GetValue();
-    const bool allow_eds1 = eds_setting >= Settings::ExtendedDynamicState::EDS1;
-    const bool allow_eds2 = eds_setting >= Settings::ExtendedDynamicState::EDS2;
-    const bool allow_eds3 = eds_setting >= Settings::ExtendedDynamicState::EDS3;
-
+    // Alinhado ao Eden: Ativa os recursos reais suportados pelo hardware diretamente
     dynamic_features = DynamicFeatures{
-        .has_extended_dynamic_state = allow_eds1 && device.IsExtExtendedDynamicStateSupported(),
-        .has_extended_dynamic_state_2 = allow_eds2 && device.IsExtExtendedDynamicState2Supported(),
-        .has_extended_dynamic_state_2_extra =
-            allow_eds2 && device.IsExtExtendedDynamicState2ExtrasSupported(),
-        .has_extended_dynamic_state_3_blend =
-            allow_eds3 && device.IsExtExtendedDynamicState3BlendingSupported(),
-        .has_extended_dynamic_state_3_enables =
-            allow_eds3 && device.IsExtExtendedDynamicState3EnablesSupported(),
-        .has_dynamic_vertex_input = allow_eds3 && device.IsExtVertexInputDynamicStateSupported(),
+        .has_extended_dynamic_state = device.IsExtExtendedDynamicStateSupported(),
+        .has_extended_dynamic_state_2 = device.IsExtExtendedDynamicState2Supported(),
+        .has_extended_dynamic_state_2_extra = device.IsExtExtendedDynamicState2ExtrasSupported(),
+        .has_extended_dynamic_state_3_blend = device.IsExtExtendedDynamicState3BlendingSupported(),
+        .has_extended_dynamic_state_3_enables = device.IsExtExtendedDynamicState3EnablesSupported(),
+        .has_dynamic_vertex_input = device.IsExtVertexInputDynamicStateSupported() &&
+                                    Settings::values.vertex_input_dynamic_state.GetValue(),
         .has_transform_feedback = device.IsExtTransformFeedbackSupported(),
     };
 }
 
 PipelineCache::~PipelineCache() {
-    // Drain all pending serialization tasks before destruction
+    // 1. Aguarda todas as compilações na GPU terminarem
+    workers.WaitForRequests();
+
+    // 2. Aguarda gravações de disco terminarem
     serialization_thread.WaitForRequests();
 
+    // 3. Salva o estado completo no vulkan_pipelines.bin
     if (use_vulkan_pipeline_cache && !vulkan_pipeline_cache_filename.empty()) {
         SerializeVulkanPipelineCache(vulkan_pipeline_cache_filename, vulkan_pipeline_cache,
                                      VULKAN_PIPELINE_CACHE_VERSION);
@@ -478,21 +472,24 @@ void PipelineCache::QueueVulkanPipelineCacheFlush() {
     if (!use_vulkan_pipeline_cache || vulkan_pipeline_cache_filename.empty()) {
         return;
     }
-    if (++pipelines_since_flush < VULKAN_CACHE_FLUSH_PIPELINES) {
-        return;
-    }
+
     const auto now = std::chrono::steady_clock::now();
-    const auto megabytes = last_cache_size.load(std::memory_order_relaxed) / (1024 * 1024);
-    const std::chrono::seconds interval{
-        std::max<size_t>(VULKAN_CACHE_FLUSH_MIN_SECONDS, megabytes)};
-    if (last_flush.time_since_epoch().count() != 0 && now - last_flush < interval) {
+    const auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - last_flush).count();
+
+    const bool count_reached = (++pipelines_since_flush >= VULKAN_CACHE_FLUSH_PIPELINES);
+    const bool time_reached = (last_flush.time_since_epoch().count() != 0) && (elapsed >= VULKAN_CACHE_FLUSH_MIN_SECONDS);
+
+    if (!count_reached && !time_reached) {
         return;
     }
+
     if (flush_in_flight.exchange(true, std::memory_order_acq_rel)) {
         return;
     }
+
     pipelines_since_flush = 0;
     last_flush = now;
+
     serialization_thread.QueueWork([this] {
         SerializeVulkanPipelineCache(vulkan_pipeline_cache_filename, vulkan_pipeline_cache,
                                      VULKAN_PIPELINE_CACHE_VERSION);
@@ -570,8 +567,6 @@ void PipelineCache::LoadDiskResources(u64 title_id, std::stop_token stop_loading
         std::unique_ptr<PipelineStatistics> statistics;
         size_t total_compute{};
         size_t total_graphics{};
-        size_t invalid{};
-        size_t feature_mismatch{};
     } state;
 
     if (device.IsKhrPipelineExecutablePropertiesEnabled()) {
@@ -580,11 +575,6 @@ void PipelineCache::LoadDiskResources(u64 title_id, std::stop_token stop_loading
     const auto load_compute{[&](std::ifstream& file, FileEnvironment env) {
         ComputePipelineCacheKey key;
         file.read(reinterpret_cast<char*>(&key), sizeof(key));
-
-        if (!env.HasValidEntryInstruction()) {
-            ++state.invalid;
-            return;
-        }
 
         workers.QueueWork([this, key, env_ = std::move(env), &state, &callback]() mutable {
             CITRON_PROFILE_SCOPE("Vulkan::PipelineCacheWorker");
@@ -606,11 +596,7 @@ void PipelineCache::LoadDiskResources(u64 title_id, std::stop_token stop_loading
         GraphicsPipelineCacheKey key;
         file.read(reinterpret_cast<char*>(&key), sizeof(key));
 
-        if (!std::ranges::all_of(envs, &FileEnvironment::HasValidEntryInstruction)) {
-            ++state.invalid;
-            return;
-        }
-
+        // Alinhado ao Eden: Removeu HasValidEntryInstruction e checagens redundantes
         if ((key.state.extended_dynamic_state != 0) !=
                 dynamic_features.has_extended_dynamic_state ||
             (key.state.extended_dynamic_state_2 != 0) !=
@@ -623,9 +609,9 @@ void PipelineCache::LoadDiskResources(u64 title_id, std::stop_token stop_loading
                 dynamic_features.has_extended_dynamic_state_3_enables ||
             (key.state.dynamic_vertex_input != 0) != dynamic_features.has_dynamic_vertex_input ||
             (key.state.xfb_enabled != 0 && !dynamic_features.has_transform_feedback)) {
-            ++state.feature_mismatch;
             return;
         }
+
         workers.QueueWork([this, key, envs_ = std::move(envs), &state, &callback]() mutable {
             CITRON_PROFILE_SCOPE("Vulkan::PipelineCacheWorker");
             ShaderPools pools;
@@ -648,23 +634,12 @@ void PipelineCache::LoadDiskResources(u64 title_id, std::stop_token stop_loading
         ++state.total;
         ++state.total_graphics;
     }};
+
     VideoCommon::LoadPipelines(stop_loading, pipeline_cache_filename, TRANSFERABLE_CACHE_VERSION,
                                load_compute, load_graphics);
 
-    if (state.invalid != 0) {
-        LOG_WARNING(Render_Vulkan, "Skipped {} cached pipelines with invalid shader entry points",
-                    state.invalid);
-    }
-    if (state.feature_mismatch != 0) {
-        LOG_WARNING(Render_Vulkan,
-                    "Skipped {} cached graphics pipelines with incompatible dynamic-state "
-                    "features",
-                    state.feature_mismatch);
-    }
-
     LOG_INFO(Render_Vulkan, "Total Pipeline Count: {}", state.total);
 
-    // Pre-reserve space in caches to reduce rehashing during async builds
     {
         std::scoped_lock lock{state.mutex};
         if (state.total_compute > 0) {
@@ -679,8 +654,10 @@ void PipelineCache::LoadDiskResources(u64 title_id, std::stop_token stop_loading
     state.has_loaded = true;
     lock.unlock();
 
+    // Aguarda todos os workers terminarem a compilação
     workers.WaitForRequests(stop_loading);
 
+    // Salva o cache compilado de pipelines do driver logo após o término da inicialização
     if (use_vulkan_pipeline_cache) {
         SerializeVulkanPipelineCache(vulkan_pipeline_cache_filename, vulkan_pipeline_cache,
                                      VULKAN_PIPELINE_CACHE_VERSION);
@@ -754,7 +731,6 @@ std::unique_ptr<GraphicsPipeline> PipelineCache::CreateGraphicsPipeline(
     const bool uses_vertex_a{key.unique_hashes[0] != 0};
     const bool uses_vertex_b{key.unique_hashes[1] != 0};
 
-    // Layer passthrough generation for devices without VK_EXT_shader_viewport_index_layer
     Shader::IR::Program* layer_source_program{};
 
     for (size_t index = 0; index < Tegra::Engines::Maxwell3D::Regs::MaxShaderProgram; ++index) {
@@ -776,10 +752,8 @@ std::unique_ptr<GraphicsPipeline> PipelineCache::CreateGraphicsPipeline(
         const u32 cfg_offset{static_cast<u32>(env.StartAddress() + sizeof(Shader::ProgramHeader))};
         Shader::Maxwell::Flow::CFG cfg(env, pools.flow_block, cfg_offset, index == 0);
         if (!uses_vertex_a || index != 1) {
-            // Normal path
             programs[index] = TranslateProgram(pools.inst, pools.block, env, cfg, host_info);
         } else {
-            // VertexB path when VertexA is present.
             auto& program_va{programs[0]};
             auto program_vb{TranslateProgram(pools.inst, pools.block, env, cfg, host_info)};
             programs[index] = MergeDualVertexPrograms(program_va, program_vb, env);
@@ -815,7 +789,6 @@ std::unique_ptr<GraphicsPipeline> PipelineCache::CreateGraphicsPipeline(
         const auto runtime_info{MakeRuntimeInfo(programs, key, program, previous_stage)};
         ConvertLegacyToGeneric(program, runtime_info);
         std::vector<u32> code = EmitSPIRV(profile, runtime_info, program, binding);
-        // Reserve space to reduce allocations during shader compilation
         code.reserve(std::max<size_t>(code.size(), 16 * 1024 / sizeof(u32)));
         device.SaveShader(code);
         modules[stage_index] = BuildShader(device, code);
