@@ -18,7 +18,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          # Só precisa do commit atual, não do histórico inteiro
+          fetch-depth: 1
       - name: Get current commit hash
         id: head
         run: |
@@ -63,7 +64,8 @@ jobs:
         with:
           persist-credentials: false
           submodules: recursive
-          fetch-depth: 0
+          # Clone raso: o build só usa 'git rev-parse --short HEAD'
+          fetch-depth: 1
 
       - name: Get Version
         id: version
@@ -72,11 +74,17 @@ jobs:
           VERSION=$(git rev-parse --short HEAD)
           echo "VERSION=${VERSION}" >> $GITHUB_OUTPUT
 
-      - name: Add clang-cl component to Visual Studio
+      # Só instala o componente se o clang-cl ainda não existir na imagem
+      - name: Add clang-cl component to Visual Studio (if missing)
         shell: powershell
         run: |
           $vsInstaller = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vs_installer.exe"
           $vsPath = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products '*' -property installationPath
+          $clang = Join-Path $vsPath 'VC\Tools\Llvm\x64\bin\clang-cl.exe'
+          if (Test-Path $clang) {
+            Write-Host "clang-cl ja presente em $clang; pulando instalacao."
+            exit 0
+          }
           & $vsInstaller modify --installPath "$vsPath" --add Microsoft.VisualStudio.Component.VC.Llvm.Clang --quiet --norestart --wait
           if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 3010) { throw "VS modify failed with exit code $LASTEXITCODE" }
 
@@ -84,23 +92,14 @@ jobs:
         uses: msys2/setup-msys2@v2
         with:
           msystem: CLANG64
-          update: true
+          # update: true roda um pacman -Syu completo (alguns minutos).
+          # Se algum pacote reclamar de base desatualizada, volte para true.
+          update: false
           install: >-
             mingw-w64-clang-x86_64-ninja
             mingw-w64-clang-x86_64-nasm
             mingw-w64-clang-x86_64-glslang
             mingw-w64-clang-x86_64-sccache
-
-      # Configura o Cache do sccache entre execuções
-      - name: Cache sccache directory
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~\AppData\Local\Mozilla\sccache
-            ~/.cache/sccache
-          key: ${{ runner.os }}-sccache-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-sccache-
 
       - name: Setup native Windows Python
         uses: actions/setup-python@v5
@@ -116,20 +115,34 @@ jobs:
             exit 1
           }
 
-      - name: Cache CPM sources
-        uses: actions/cache@v4
+      # ---- CACHES ----
+      # Os caminhos precisam ser os REAIS onde o MSYS2 grava. Pelo log do build, o CPM
+      # fica em D:\a\_temp\msys64\home\runneradmin\.cache\cpm (e nao em C:\Users\...).
+      # O sccache usa um diretorio absoluto proprio (sem '~', que nao e expandido em env:).
+      - name: Restore CPM sources
+        id: cpm_cache
+        uses: actions/cache/restore@v4
         with:
           path: |
-            ~/.cache/cpm
+            ${{ runner.temp }}\msys64\home\runneradmin\.cache\cpm
             build/clang-cl/use/_deps
           key: clangcl-cpm-${{ runner.os }}-${{ hashFiles('CMakeModules/dependencies.cmake', 'vcpkg.json', 'build-clangtron-windows.sh') }}
           restore-keys: |
             clangcl-cpm-${{ runner.os }}-
 
+      - name: Restore sccache
+        id: sccache_cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}\sccache
+          key: sccache-${{ runner.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            sccache-${{ runner.os }}-
+
       - name: Setup Clangtron Build Environment
         shell: "msys2 {0}"
         env:
-          SCCACHE_DIR: ~/.cache/sccache
+          SCCACHE_DIR: ${{ runner.temp }}\sccache
           SCCACHE_CACHE_SIZE: 5G
         run: |
           chmod +x build-clangtron-windows.sh
@@ -157,21 +170,44 @@ jobs:
         shell: "msys2 {0}"
         env:
           MSYSTEM: CLANG64
-          SCCACHE_DIR: ~/.cache/sccache
+          SCCACHE_DIR: ${{ runner.temp }}\sccache
           SCCACHE_CACHE_SIZE: 5G
         run: |
           export CITRON_BUILD_TYPE=Nightly
           export PYTHON_EXECUTABLE="$(cygpath -u '${{ steps.python.outputs.python-path }}')"
-          
-          # Inicia servidor sccache e zera contadores para diagnosticar
+
           sccache --start-server || true
           sccache --zero-stats || true
 
           ./build-clangtron-windows.sh use --compiler clang-cl --pgo none --lto none
 
-          # Mostra a taxa de reaproveitamento do cache no log
-          echo "=== Relatório de Cache do SCCACHE ==="
+      # Roda mesmo se o build falhar: mostra quantos arquivos vieram do cache
+      - name: sccache stats
+        if: always()
+        shell: "msys2 {0}"
+        env:
+          SCCACHE_DIR: ${{ runner.temp }}\sccache
+        run: |
+          echo "=== Relatorio de Cache do SCCACHE ==="
           sccache --show-stats || true
+
+      # Salva o cache mesmo quando o build falha (o 'actions/cache' normal so salva
+      # em caso de sucesso, entao uma falha de compilacao jogava fora tudo que ja foi compilado)
+      - name: Save sccache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}\sccache
+          key: sccache-${{ runner.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+
+      - name: Save CPM sources
+        if: always() && steps.cpm_cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ${{ runner.temp }}\msys64\home\runneradmin\.cache\cpm
+            build/clang-cl/use/_deps
+          key: clangcl-cpm-${{ runner.os }}-${{ hashFiles('CMakeModules/dependencies.cmake', 'vcpkg.json', 'build-clangtron-windows.sh') }}
 
       - name: Package Windows Build (clang-cl)
         shell: bash
@@ -184,13 +220,15 @@ jobs:
           fi
           cd "$BIN_DIR"
           rm -rf user backup update_result.txt update_helper_log.txt
-          7z a -tzip "${GITHUB_WORKSPACE}/dist/Citron-windows-nightly-${{ steps.version.outputs.VERSION }}-x64-clangcl.zip" .
+          7z a -tzip -mx=3 "${GITHUB_WORKSPACE}/dist/Citron-windows-nightly-${{ steps.version.outputs.VERSION }}-x64-clangcl.zip" .
 
       - name: Upload Windows Build (clang-cl)
         uses: actions/upload-artifact@v4
         with:
           name: Citron-Windows-Nightly-ClangCL-x64
           path: "dist/*.zip"
+          # o zip ja esta comprimido; nao gasta tempo comprimindo de novo
+          compression-level: 0
 
   release:
     if: ${{ github.ref_name == 'main' }}
