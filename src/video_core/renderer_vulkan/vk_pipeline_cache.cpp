@@ -56,8 +56,8 @@ using VideoCommon::FileEnvironment;
 using VideoCommon::GenericEnvironment;
 using VideoCommon::GraphicsEnvironment;
 
-constexpr u32 TRANSFERABLE_CACHE_VERSION = 15;
-constexpr u32 VULKAN_PIPELINE_CACHE_VERSION = 14;
+constexpr u32 TRANSFERABLE_CACHE_VERSION = 18;
+constexpr u32 VULKAN_PIPELINE_CACHE_VERSION = 18;
 constexpr size_t VULKAN_CACHE_FLUSH_PIPELINES = 64;
 constexpr size_t VULKAN_CACHE_FLUSH_MIN_SECONDS = 15;
 constexpr std::array<char, 8> VULKAN_CACHE_MAGIC_NUMBER{'y', 'u', 'z', 'u', 'v', 'k', 'c', 'h'};
