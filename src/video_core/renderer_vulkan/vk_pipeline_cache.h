@@ -1,5 +1,7 @@
+// SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
+// SPDX-License-Identifier: GPL-3.0-or-later
+
 // SPDX-FileCopyrightText: Copyright 2019 yuzu Emulator Project
-// SPDX-FileCopyrightText: Copyright 2025 Citron Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #pragma once
@@ -11,7 +13,7 @@
 #include <filesystem>
 #include <memory>
 #include <type_traits>
-#include <unordered_map>
+#include "common/container/unordered_map.h"
 #include <vector>
 
 #include "common/common_types.h"
@@ -44,6 +46,8 @@ class ShaderNotify;
 }
 
 namespace Vulkan {
+
+using Maxwell = Tegra::Engines::Maxwell3D::Regs;
 
 struct ComputePipelineCacheKey {
     u64 unique_hash;
@@ -103,6 +107,7 @@ public:
     explicit PipelineCache(Tegra::MaxwellDeviceMemoryManager& device_memory_, const Device& device,
                            Scheduler& scheduler, DescriptorPool& descriptor_pool,
                            GuestDescriptorQueue& guest_descriptor_queue,
+                           DescriptorBufferRing& descriptor_buffer_ring,
                            RenderPassCache& render_pass_cache, BufferCache& buffer_cache,
                            TextureCache& texture_cache, VideoCore::ShaderNotify& shader_notify_);
     ~PipelineCache();
@@ -143,11 +148,11 @@ private:
 
     void QueueVulkanPipelineCacheFlush();
 
-public:
     const Device& device;
     Scheduler& scheduler;
     DescriptorPool& descriptor_pool;
     GuestDescriptorQueue& guest_descriptor_queue;
+    DescriptorBufferRing& descriptor_buffer_ring;
     RenderPassCache& render_pass_cache;
     BufferCache& buffer_cache;
     TextureCache& texture_cache;
@@ -158,8 +163,8 @@ public:
     GraphicsPipelineCacheKey graphics_key{};
     GraphicsPipeline* current_pipeline{};
 
-    std::unordered_map<ComputePipelineCacheKey, std::unique_ptr<ComputePipeline>> compute_cache;
-    std::unordered_map<GraphicsPipelineCacheKey, std::unique_ptr<GraphicsPipeline>> graphics_cache;
+    ::Common::unordered_map<ComputePipelineCacheKey, std::unique_ptr<ComputePipeline>> compute_cache;
+    ::Common::unordered_map<GraphicsPipelineCacheKey, std::unique_ptr<GraphicsPipeline>> graphics_cache;
 
     ShaderPools main_pools;
 
@@ -178,7 +183,6 @@ public:
     Common::ThreadWorker workers;
     Common::ThreadWorker serialization_thread;
     DynamicFeatures dynamic_features;
-
 };
 
 } // namespace Vulkan
